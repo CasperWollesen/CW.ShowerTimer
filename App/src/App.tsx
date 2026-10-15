@@ -223,7 +223,7 @@ export default function App() {
   const latest = data.sessions.find(s => s.complete);
   const notification = toast && <div className="toast" role="status"><span>{toast}</span>{deleted && <button onClick={() => { setData(d => ({ ...d, sessions: [...d.sessions, deleted].sort((a, b) => b.startedAt - a.startedAt) })); setDeleted(null); setToast('Restored.'); }}>Undo</button>}<button className="icon-button" aria-label="Dismiss notification" onClick={() => setToast('')}><X size={16} /></button></div>;
 
-  return <div className="app-shell">
+  return <div className={'app-shell' + (!run && !result ? ' home-screen' : '')}>
     <header className="app-header"><a className="brand" href={import.meta.env.BASE_URL} onClick={e => { e.preventDefault(); if (!run) { setResult(null); setPanel(null); } }}><span className="brand-mark"><Droplets size={22} /></span><span>shower<span className="brand-light">timer</span><span className="brand-dot">.</span></span></a><button className="icon-button" aria-label="Open menu" onClick={() => setPanel('menu')}><Menu size={23} /></button></header>
     <main>
       {!run && !result && <>
@@ -235,7 +235,6 @@ export default function App() {
         <button className="routine-card" onClick={() => setPanel('settings')} aria-label="Change shower timings"><span><span className="routine-emoji">🚿</span><strong>{settings.mode === 'guided' ? formatTime(settings.wet) : 'Get wet'}</strong><small>{settings.mode === 'guided' ? 'get wet' : 'tap to move on'}</small></span><ChevronRight size={14} /><span><span className="routine-emoji">🫧</span><strong>No rush</strong><small>soap up</small></span><ChevronRight size={14} /><span><span className="routine-emoji">💧</span><strong>{settings.mode === 'guided' ? formatTime(settings.rinse) : 'Rinse off'}</strong><small>{settings.mode === 'guided' ? 'rinse off' : 'tap to finish'}</small></span><Settings2 className="routine-edit" size={15} /></button>
         <div className={'cold-card ' + (settings.coldEnabled ? 'enabled' : '')}><Toggle checked={settings.coldEnabled} onChange={coldEnabled => patchSettings({ coldEnabled })} label="A cold finish?" description={settings.coldEnabled ? settings.coldMode === 'random' ? `Surprise · ${formatTime(settings.coldMin)}–${formatTime(settings.coldMax)}` : 'Measure your moment of cold' : 'A little extra reset. Entirely optional.'} icon={<Snowflake size={22} />} />{settings.coldEnabled && <button className="cold-config text-button" onClick={() => setPanel('settings')}>Change cold finish<ChevronRight size={14} /></button>}</div>
         <button className="primary start-button" onClick={start}><Play size={19} fill="currentColor" />Start my shower<ArrowRight size={19} /></button>
-        <p className="below-button">Set your phone down. Take a breath.</p>
         {latest && <button className="last-shower" onClick={() => setPanel('history')}><History size={15} />Last shower <strong>{formatTime(total(latest))}</strong><ChevronRight size={15} /></button>}
       </>}
       {run && phaseInfo && <section className={'active-view ' + (run.phase.startsWith('cold') ? 'is-cold ' : '') + (run.wetNeedsConfirmation || rinseOvertime ? 'awaiting-water-stop' : '')}>

@@ -7,6 +7,11 @@ Phone-first, English, minimal home screen. Preferences, history and diagnostics 
 - Heading and drop illustration stay beside one another in a compact row on mobile and desktop.
 - Settings order: Guided shower, Cold finish, Appearance, Sound & vibration, Save, Share.
 
+## iPhone mini spacing, version 0.2.2
+- Home header is 24px shorter and has no extra main top padding.
+- Remove the helper sentence below Start; tighten the cold card and its configuration link spacing.
+- Keep text sizes, safe-area padding and minimum 44px button targets; no zoom/text-scaling restrictions.
+
 ## Behavior
 - Guided: timed wet → unlimited soap → timed rinse. Wet advances at its target; rinse waits for confirmation.
 - Measure: stopwatch per phase with manual transitions.
