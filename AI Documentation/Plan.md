@@ -2,6 +2,11 @@
 
 Phone-first, English, minimal home screen. Preferences, history and diagnostics in a menu.
 
+## Compact layout, version 0.2.1
+- Home omits the everyday-reset eyebrow, introductory paragraph, mode description and privacy footer.
+- Heading and drop illustration stay beside one another in a compact row on mobile and desktop.
+- Settings order: Guided shower, Cold finish, Appearance, Sound & vibration, Save, Share.
+
 ## Behavior
 - Guided: timed wet → unlimited soap → timed rinse. Wet advances at its target; rinse waits for confirmation.
 - Measure: stopwatch per phase with manual transitions.

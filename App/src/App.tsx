@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ArrowLeft, ArrowRight, Check, ChevronRight, Clock3, Droplets, FlaskConical, History, Menu, Moon, Pause, Play, Settings2, ShieldCheck, Snowflake, Sun, Trash2, Volume2, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, ChevronRight, Clock3, Droplets, FlaskConical, History, Menu, Moon, Pause, Play, Settings2, Snowflake, Sun, Trash2, Volume2, X } from 'lucide-react';
 import { useRegisterSW } from 'virtual:pwa-register/react';
 import { advance, confirmWaterStop, elapsed, finish, formatTime, normalizeSettings, phaseLimit, startRun, togglePause, total, wetDeadline } from './domain';
 import type { Phase, Run, Session, Settings } from './domain';
@@ -85,23 +85,23 @@ function SettingsPanel({ settings, onSave }: { settings: Settings; onSave: (s: S
     onSave(normalizeSettings(draft));
   }}>
     <p className="panel-intro">Set it once. Make it your ritual.</p>
-    <h3>Appearance</h3><div className="segmented"><button type="button" className={draft.theme === 'dark' ? 'selected' : ''} onClick={() => patch({ theme: 'dark' })}><Moon size={17} />Dark</button><button type="button" className={draft.theme === 'light' ? 'selected' : ''} onClick={() => patch({ theme: 'light' })}><Sun size={17} />Light</button></div>
     <h3>Guided shower</h3><div className="settings-card">
       <DurationInput label="🚿 Get wet" value={draft.wet} onChange={wet => patch({ wet })} />
       <label className="number-row">Warn me before the end <span><input type="number" min="0" max="3599" value={draft.wetWarning} required onChange={e => patch({ wetWarning: Number(e.target.value) })} /> sec</span></label>
       <div className="divider" /><DurationInput label="💧 Rinse off" value={draft.rinse} onChange={rinse => patch({ rinse })} />
       <label className="number-row">Warn me before the end <span><input type="number" min="0" max="3599" value={draft.rinseWarning} required onChange={e => patch({ rinseWarning: Number(e.target.value) })} /> sec</span></label>
     </div><p className="hint">Soaping has no time limit. Set a warning to 0 for no warning.</p>
-    <h3>Sound & vibration</h3><div className="settings-card"><Toggle checked={draft.sound} onChange={sound => patch({ sound })} label="Beep alerts" description="One for a warning. Three when time is up." icon={<Volume2 size={20} />} />
-      {draft.sound && <><div className="segmented"><button type="button" className={draft.signal === 'gentle' ? 'selected' : ''} onClick={() => patch({ signal: 'gentle' })}>Gentle</button><button type="button" className={draft.signal === 'strong' ? 'selected' : ''} onClick={() => patch({ signal: 'strong' })}>Louder & longer</button></div><button type="button" className="text-button" onClick={async () => { if (await unlockAudio()) beep('end', draft.signal); }}>Preview 3 beeps</button><p className="hint">Your phone’s media volume controls the final loudness.</p></>}
-      <div className="divider" /><Toggle checked={draft.vibration} onChange={vibration => patch({ vibration })} label="Vibrate with alerts" description="Optional extra feedback on supported phones." />
-      <p className="hint">{typeof navigator.vibrate === 'function' ? 'This browser exposes vibration. Try the vibration test on your phone to check the hardware.' : 'Vibration alerts are not supported by this browser. Use sound on iPhone/Safari.'}</p>
-    </div>
     <h3>Cold finish</h3><div className="settings-card"><Toggle checked={draft.coldEnabled} onChange={coldEnabled => patch({ coldEnabled })} label="Finish with cold water" description="Always starts with your own tap." icon={<Snowflake size={20} />} />
       {draft.coldEnabled && <><div className="divider" /><div className="segmented"><button type="button" className={draft.coldMode === 'measure' ? 'selected' : ''} onClick={() => patch({ coldMode: 'measure' })}>Measure</button><button type="button" className={draft.coldMode === 'random' ? 'selected' : ''} onClick={() => patch({ coldMode: 'random' })}>Surprise me</button></div>
         <p className="hint">{draft.coldMode === 'random' ? 'A random duration within your range. No countdown or warning gives it away.' : 'An open-ended stopwatch. Finish whenever you’re ready.'}</p>
         {draft.coldMode === 'random' && <div className="range-inputs"><DurationInput label="Minimum" value={draft.coldMin} onChange={coldMin => patch({ coldMin })} /><DurationInput label="Maximum" value={draft.coldMax} onChange={coldMax => patch({ coldMax })} /></div>}
       </>}
+    </div>
+    <h3>Appearance</h3><div className="segmented"><button type="button" className={draft.theme === 'dark' ? 'selected' : ''} onClick={() => patch({ theme: 'dark' })}><Moon size={17} />Dark</button><button type="button" className={draft.theme === 'light' ? 'selected' : ''} onClick={() => patch({ theme: 'light' })}><Sun size={17} />Light</button></div>
+    <h3>Sound & vibration</h3><div className="settings-card"><Toggle checked={draft.sound} onChange={sound => patch({ sound })} label="Beep alerts" description="One for a warning. Three when time is up." icon={<Volume2 size={20} />} />
+      {draft.sound && <><div className="segmented"><button type="button" className={draft.signal === 'gentle' ? 'selected' : ''} onClick={() => patch({ signal: 'gentle' })}>Gentle</button><button type="button" className={draft.signal === 'strong' ? 'selected' : ''} onClick={() => patch({ signal: 'strong' })}>Louder & longer</button></div><button type="button" className="text-button" onClick={async () => { if (await unlockAudio()) beep('end', draft.signal); }}>Preview 3 beeps</button><p className="hint">Your phone’s media volume controls the final loudness.</p></>}
+      <div className="divider" /><Toggle checked={draft.vibration} onChange={vibration => patch({ vibration })} label="Vibrate with alerts" description="Optional extra feedback on supported phones." />
+      <p className="hint">{typeof navigator.vibrate === 'function' ? 'This browser exposes vibration. Try the vibration test on your phone to check the hardware.' : 'Vibration alerts are not supported by this browser. Use sound on iPhone/Safari.'}</p>
     </div>{error && <p className="error" role="alert">{error}</p>}
     <button className="primary sticky-action" type="submit"><Check size={19} />Save settings</button>
     <Share />
@@ -227,11 +227,11 @@ export default function App() {
     <header className="app-header"><a className="brand" href={import.meta.env.BASE_URL} onClick={e => { e.preventDefault(); if (!run) { setResult(null); setPanel(null); } }}><span className="brand-mark"><Droplets size={22} /></span><span>shower<span className="brand-light">timer</span><span className="brand-dot">.</span></span></a><button className="icon-button" aria-label="Open menu" onClick={() => setPanel('menu')}><Menu size={23} /></button></header>
     <main>
       {!run && !result && <>
-        <div className="eyebrow"><span className="status-dot" />A LITTLE EVERYDAY RESET</div>
-        <div className="hero"><h1>Your shower.<br /><em>Your pace.</em></h1><p>A moment to switch off.<br />We’ll keep an eye on the time.</p></div>
+        <div className="home-intro">
+        <div className="hero"><h1>Your shower.<br /><em>Your pace.</em></h1></div>
         <div className="water-scene" aria-hidden="true"><span className="orbit orbit-one" /><span className="orbit orbit-two" /><div className="drop"><span /></div><span className="bubble bubble-one" /><span className="bubble bubble-two" /><span className="bubble bubble-three" /><span className="scene-spark">✦</span><span className="scene-caption">a fresh start, every time</span></div>
+        </div>
         <div className="mode-switch segmented" aria-label="Shower mode"><button className={settings.mode === 'guided' ? 'selected' : ''} onClick={() => patchSettings({ mode: 'guided' })}><Droplets size={18} />Guide me</button><button className={settings.mode === 'measure' ? 'selected' : ''} onClick={() => patchSettings({ mode: 'measure' })}><Clock3 size={18} />Just measure</button></div>
-        <p className="mode-caption">{settings.mode === 'guided' ? 'A gentle nudge. An unhurried lather.' : 'No targets. Find out what your shower looks like.'}</p>
         <button className="routine-card" onClick={() => setPanel('settings')} aria-label="Change shower timings"><span><span className="routine-emoji">🚿</span><strong>{settings.mode === 'guided' ? formatTime(settings.wet) : 'Get wet'}</strong><small>{settings.mode === 'guided' ? 'get wet' : 'tap to move on'}</small></span><ChevronRight size={14} /><span><span className="routine-emoji">🫧</span><strong>No rush</strong><small>soap up</small></span><ChevronRight size={14} /><span><span className="routine-emoji">💧</span><strong>{settings.mode === 'guided' ? formatTime(settings.rinse) : 'Rinse off'}</strong><small>{settings.mode === 'guided' ? 'rinse off' : 'tap to finish'}</small></span><Settings2 className="routine-edit" size={15} /></button>
         <div className={'cold-card ' + (settings.coldEnabled ? 'enabled' : '')}><Toggle checked={settings.coldEnabled} onChange={coldEnabled => patchSettings({ coldEnabled })} label="A cold finish?" description={settings.coldEnabled ? settings.coldMode === 'random' ? `Surprise · ${formatTime(settings.coldMin)}–${formatTime(settings.coldMax)}` : 'Measure your moment of cold' : 'A little extra reset. Entirely optional.'} icon={<Snowflake size={22} />} />{settings.coldEnabled && <button className="cold-config text-button" onClick={() => setPanel('settings')}>Change cold finish<ChevronRight size={14} /></button>}</div>
         <button className="primary start-button" onClick={start}><Play size={19} fill="currentColor" />Start my shower<ArrowRight size={19} /></button>
@@ -257,7 +257,6 @@ export default function App() {
       </section>}
       {result && !run && <section className="result-view"><div className="result-emoji">{result.complete ? '✨' : '🫧'}</div><div className="eyebrow">{result.complete ? 'FRESH CHAPTER. SAME YOU.' : 'SAVED TO YOUR HISTORY'}</div><h1>{result.complete ? 'All refreshed.' : 'A moment, saved.'}</h1><p>{result.complete ? 'A little reset goes a long way.' : 'This shower is marked as stopped early.'}</p><div className="result-total"><strong>{formatTime(total(result))}</strong><span>your shower</span></div><div className="settings-card"><PhaseTimes session={result} /></div><button className="primary" onClick={() => setResult(null)}>Lovely. All done.<Check size={19} /></button><button className="text-button center" onClick={() => setPanel('history')}><History size={17} />View history</button></section>}
     </main>
-    {!run && <footer><ShieldCheck size={14} />Just you and your device. Always private.</footer>}
     {!storageOk && <div className="persistent-notice" role="alert">Storage is unavailable. Settings and history won’t survive closing this page.</div>}
     {needRefresh && !run && <div className="update-banner">A fresh version is ready.<button className="text-button" onClick={() => void updateServiceWorker(true)}>Update</button></div>}
     {!panel && notification}
