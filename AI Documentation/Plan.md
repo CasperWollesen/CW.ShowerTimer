@@ -12,6 +12,22 @@ Phone-first, English, minimal home screen. Preferences, history and diagnostics 
 - Remove the helper sentence below Start; tighten the cold card and its configuration link spacing.
 - Keep text sizes, safe-area padding and minimum 44px button targets; no zoom/text-scaling restrictions.
 
+## Settings controls, version 0.3.0
+- Native select controls for minutes and seconds; 5-second steps for durations, cold ranges and warnings.
+  Preserve existing off-grid values until changed; warning choices are bounded by phase duration.
+- Each sound card offers warning/end previews independently of selection. Strong signal pitch is
+  440 Hz for warnings and 520 Hz for completion, keeping louder/longer envelopes. Replace overlapping previews.
+- Track preference drafts separately from saved settings. Close, menu-back, Escape and backdrop
+  require Save / Discard / Keep editing when dirty. Reverting all changes removes the prompt.
+- Share a single validation function between direct saving and save-before-leaving.
+- beforeunload also protects dirty settings where the browser supports it; mobile termination
+  can still skip browser events. No promise of intercepting an OS force-close.
+- Native picker presentation on a real iPhone remains device QA.
+- Verification: typecheck, all 30 tests and production build pass. Desktop browser checked
+  save-before-close, discard-before-menu, keep-editing retention, Escape interception, invalid
+  save blocking and reverted edits leaving without a prompt. Previews leave the saved selection
+  unchanged. Layout inspected at 375px with no horizontal overflow; no browser errors.
+
 ## Behavior
 - Guided: timed wet → unlimited soap → timed rinse. Wet advances at its target; rinse waits for confirmation.
 - Measure: stopwatch per phase with manual transitions.

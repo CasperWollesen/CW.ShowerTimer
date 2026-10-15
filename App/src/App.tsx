@@ -8,6 +8,7 @@ import { readData, saveData } from './storage';
 import { beep, unlockAudio, vibrate } from './audio';
 import { Share } from './Share';
 import { version } from '../package.json';
+import { pickerValues, settingsChanged, settingsError } from './preferences';
 
 type Panel = 'menu' | 'settings' | 'history' | 'tests' | null;
 const phaseText: Record<Phase, { title: string; caption: string; emoji: string }> = {
@@ -52,7 +53,7 @@ function Sheet({ title, children, onClose, back }: { title: string; children: Re
     dialog.showModal();
     return () => dialog.close();
   }, []);
-  return <dialog ref={ref} className="sheet" onCancel={onClose} onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
+  return <dialog ref={ref} className="sheet" onCancel={event => { event.preventDefault(); onClose(); }} onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
     <div className="sheet-inner"><div className="sheet-header">
       {back && <button className="icon-button" onClick={back} aria-label="Back to menu"><ArrowLeft size={20} /></button>}
       <h2>{title}</h2><button className="icon-button close" onClick={onClose} aria-label="Close"><X size={22} /></button>
@@ -67,30 +68,36 @@ function Toggle({ checked, onChange, label, description, icon }: { checked: bool
 
 function DurationInput({ label, value, onChange }: { label: string; value: number; onChange: (n: number) => void }) {
   return <fieldset className="duration-field"><legend>{label}</legend><div>
-    <label><input type="number" min="0" max="60" required value={Math.floor(value / 60)} onChange={e => onChange(Number(e.target.value) * 60 + value % 60)} inputMode="numeric" /><span>min</span></label>
+    <label><select value={Math.floor(value / 60)} onChange={e => { const minutes = Number(e.target.value); onChange(minutes * 60 + (minutes === 60 ? 0 : value % 60)); }}>{pickerValues(60, 1, Math.floor(value / 60)).map(n => <option key={n} value={n}>{String(n).padStart(2, '0')}</option>)}</select><span>min</span></label>
     <span className="colon">:</span>
-    <label><input type="number" min="0" max="59" required value={value % 60} onChange={e => onChange(Math.floor(value / 60) * 60 + Number(e.target.value))} inputMode="numeric" /><span>sec</span></label>
+    <label><select value={value % 60} onChange={e => onChange(Math.floor(value / 60) * 60 + Number(e.target.value))}>{pickerValues(value >= 3600 ? 0 : 59, 5, value % 60).map(n => <option key={n} value={n}>{String(n).padStart(2, '0')}</option>)}</select><span>sec</span></label>
   </div></fieldset>;
 }
 
-function SettingsPanel({ settings, onSave }: { settings: Settings; onSave: (s: Settings) => void }) {
+function SettingsPanel({ settings, onSave, onDraftChange }: { settings: Settings; onSave: (s: Settings) => void; onDraftChange: (draft: Settings | null) => void }) {
   const [draft, setDraft] = useState(settings);
   const [error, setError] = useState('');
+  const [previewStatus, setPreviewStatus] = useState('');
+  useEffect(() => { onDraftChange(draft); }, [draft, onDraftChange]);
+  useEffect(() => () => onDraftChange(null), [onDraftChange]);
+  const preview = async (signal: Settings['signal'], kind: 'warning' | 'end') => {
+    const ok = await unlockAudio();
+    setPreviewStatus(ok && beep(kind, signal) ? `${signal === 'strong' ? 'Louder & longer' : 'Gentle'} ${kind === 'warning' ? 'warning' : 'end signal'} played.` : 'Audio could not start. Check your phone volume and try again.');
+  };
   const patch = (values: Partial<Settings>) => setDraft(s => ({ ...s, ...values }));
   return <form onSubmit={e => {
     e.preventDefault();
-    if (draft.wet < 1 || draft.rinse < 1 || draft.wet > 3600 || draft.rinse > 3600) { setError('Choose a duration between 1 second and 60 minutes.'); return; }
-    if (draft.wetWarning >= draft.wet || draft.rinseWarning >= draft.rinse) { setError('Each warning must be shorter than its phase. Use 0 to turn it off.'); return; }
-    if (draft.coldMin < 1 || draft.coldMax < draft.coldMin || draft.coldMax > 3600) { setError('Cold range: minimum 1 second, maximum 60 minutes, and max must be at least min.'); return; }
+    const validation = settingsError(draft);
+    if (validation) { setError(validation); return; }
     onSave(normalizeSettings(draft));
   }}>
     <p className="panel-intro">Set it once. Make it your ritual.</p>
     <h3>Guided shower</h3><div className="settings-card">
-      <DurationInput label="🚿 Get wet" value={draft.wet} onChange={wet => patch({ wet })} />
-      <label className="number-row">Warn me before the end <span><input type="number" min="0" max="3599" value={draft.wetWarning} required onChange={e => patch({ wetWarning: Number(e.target.value) })} /> sec</span></label>
-      <div className="divider" /><DurationInput label="💧 Rinse off" value={draft.rinse} onChange={rinse => patch({ rinse })} />
-      <label className="number-row">Warn me before the end <span><input type="number" min="0" max="3599" value={draft.rinseWarning} required onChange={e => patch({ rinseWarning: Number(e.target.value) })} /> sec</span></label>
-    </div><p className="hint">Soaping has no time limit. Set a warning to 0 for no warning.</p>
+      <DurationInput label="🚿 Get wet" value={draft.wet} onChange={wet => patch({ wet, wetWarning: Math.min(draft.wetWarning, Math.max(0, Math.floor((wet - 1) / 5) * 5)) })} />
+      <label className="number-row">Warn me before the end <select aria-label="Get wet warning" value={draft.wetWarning} onChange={e => patch({ wetWarning: Number(e.target.value) })}>{pickerValues(Math.max(0, draft.wet - 1), 5, draft.wetWarning).map(n => <option key={n} value={n}>{n === 0 ? 'Off' : `${n} sec`}</option>)}</select></label>
+      <div className="divider" /><DurationInput label="💧 Rinse off" value={draft.rinse} onChange={rinse => patch({ rinse, rinseWarning: Math.min(draft.rinseWarning, Math.max(0, Math.floor((rinse - 1) / 5) * 5)) })} />
+      <label className="number-row">Warn me before the end <select aria-label="Rinse warning" value={draft.rinseWarning} onChange={e => patch({ rinseWarning: Number(e.target.value) })}>{pickerValues(Math.max(0, draft.rinse - 1), 5, draft.rinseWarning).map(n => <option key={n} value={n}>{n === 0 ? 'Off' : `${n} sec`}</option>)}</select></label>
+    </div><p className="hint">Soaping has no time limit. Choose Off for no warning.</p>
     <h3>Cold finish</h3><div className="settings-card"><Toggle checked={draft.coldEnabled} onChange={coldEnabled => patch({ coldEnabled })} label="Finish with cold water" description="Always starts with your own tap." icon={<Snowflake size={20} />} />
       {draft.coldEnabled && <><div className="divider" /><div className="segmented"><button type="button" className={draft.coldMode === 'measure' ? 'selected' : ''} onClick={() => patch({ coldMode: 'measure' })}>Measure</button><button type="button" className={draft.coldMode === 'random' ? 'selected' : ''} onClick={() => patch({ coldMode: 'random' })}>Surprise me</button></div>
         <p className="hint">{draft.coldMode === 'random' ? 'A random duration within your range. No countdown or warning gives it away.' : 'An open-ended stopwatch. Finish whenever you’re ready.'}</p>
@@ -99,7 +106,7 @@ function SettingsPanel({ settings, onSave }: { settings: Settings; onSave: (s: S
     </div>
     <h3>Appearance</h3><div className="segmented"><button type="button" className={draft.theme === 'dark' ? 'selected' : ''} onClick={() => patch({ theme: 'dark' })}><Moon size={17} />Dark</button><button type="button" className={draft.theme === 'light' ? 'selected' : ''} onClick={() => patch({ theme: 'light' })}><Sun size={17} />Light</button></div>
     <h3>Sound & vibration</h3><div className="settings-card"><Toggle checked={draft.sound} onChange={sound => patch({ sound })} label="Beep alerts" description="One for a warning. Three when time is up." icon={<Volume2 size={20} />} />
-      {draft.sound && <><div className="segmented"><button type="button" className={draft.signal === 'gentle' ? 'selected' : ''} onClick={() => patch({ signal: 'gentle' })}>Gentle</button><button type="button" className={draft.signal === 'strong' ? 'selected' : ''} onClick={() => patch({ signal: 'strong' })}>Louder & longer</button></div><button type="button" className="text-button" onClick={async () => { if (await unlockAudio()) beep('end', draft.signal); }}>Preview 3 beeps</button><p className="hint">Your phone’s media volume controls the final loudness.</p></>}
+      {draft.sound && <><div className="sound-choices">{(['gentle', 'strong'] as const).map(signal => <div className={'sound-choice ' + (draft.signal === signal ? 'selected' : '')} key={signal}><button type="button" className="sound-select" aria-pressed={draft.signal === signal} onClick={() => patch({ signal })}>{signal === 'gentle' ? 'Gentle' : 'Louder & longer'}{draft.signal === signal && <Check size={16} />}</button><div className="sound-previews"><button type="button" className="secondary" aria-label={`Test ${signal === 'gentle' ? 'Gentle' : 'Louder & longer'} warning`} onClick={() => void preview(signal, 'warning')}><Volume2 size={15} />1 beep</button><button type="button" className="secondary" aria-label={`Test ${signal === 'gentle' ? 'Gentle' : 'Louder & longer'} end signal`} onClick={() => void preview(signal, 'end')}>3 beeps</button></div></div>)}</div><p className="hint" role="status">{previewStatus || 'Try either sound without changing your selection.'}</p><p className="hint">Your phone’s media volume controls the final loudness.</p></>}
       <div className="divider" /><Toggle checked={draft.vibration} onChange={vibration => patch({ vibration })} label="Vibrate with alerts" description="Optional extra feedback on supported phones." />
       <p className="hint">{typeof navigator.vibrate === 'function' ? 'This browser exposes vibration. Try the vibration test on your phone to check the hardware.' : 'Vibration alerts are not supported by this browser. Use sound on iPhone/Safari.'}</p>
     </div>{error && <p className="error" role="alert">{error}</p>}
@@ -139,6 +146,9 @@ export default function App() {
   const [result, setResult] = useState<Session | null>(null);
   const [now, setNow] = useState(Date.now());
   const [panel, setPanel] = useState<Panel>(null);
+  const [settingsDraft, setSettingsDraft] = useState<Settings | null>(null);
+  const [pendingPanel, setPendingPanel] = useState<{ next: Panel } | null>(null);
+  const [pendingError, setPendingError] = useState('');
   const [toast, setToast] = useState('');
   const [deleted, setDeleted] = useState<Session | null>(null);
   const [testWake, setTestWake] = useState(false);
@@ -153,6 +163,13 @@ export default function App() {
   const endSignalled = useRef<string | null>(null);
   const runRef = useRef(run); runRef.current = run;
   const settings = data.settings;
+  const unsavedRef = useRef(false);
+  unsavedRef.current = settingsChanged(settings, settingsDraft);
+  const navigatePanel = (next: Panel) => {
+    if (panel === 'settings' && settingsChanged(settings, settingsDraft)) {
+      setPendingError(''); setPendingPanel({ next });
+    } else setPanel(next);
+  };
 
   useEffect(() => { setStorageOk(saveData(data)); }, [data]);
   useEffect(() => {
@@ -167,7 +184,7 @@ export default function App() {
       if (document.visibilityState === 'visible' && runRef.current) { setNow(Date.now()); setToast('Welcome back. Timing has caught up; background beeps may have been missed.'); }
     };
     document.addEventListener('visibilitychange', onReturn);
-    const onUnload = (e: BeforeUnloadEvent) => { if (runRef.current) e.preventDefault(); };
+    const onUnload = (e: BeforeUnloadEvent) => { if (runRef.current || unsavedRef.current) e.preventDefault(); };
     window.addEventListener('beforeunload', onUnload);
     return () => { document.removeEventListener('visibilitychange', onReturn); window.removeEventListener('beforeunload', onUnload); };
   }, []);
@@ -259,9 +276,9 @@ export default function App() {
     {!storageOk && <div className="persistent-notice" role="alert">Storage is unavailable. Settings and history won’t survive closing this page.</div>}
     {needRefresh && !run && <div className="update-banner">A fresh version is ready.<button className="text-button" onClick={() => void updateServiceWorker(true)}>Update</button></div>}
     {!panel && notification}
-    {panel && <Sheet title={panel === 'menu' ? 'Make yourself at home.' : panel === 'settings' ? 'Your preferences' : panel === 'history' ? 'Your little rituals' : 'Try it out'} onClose={() => setPanel(null)} back={panel !== 'menu' ? () => setPanel('menu') : undefined}>
+    {panel && <Sheet title={panel === 'menu' ? 'Make yourself at home.' : panel === 'settings' ? 'Your preferences' : panel === 'history' ? 'Your little rituals' : 'Try it out'} onClose={() => navigatePanel(null)} back={panel !== 'menu' ? () => navigatePanel('menu') : undefined}>
       {panel === 'menu' && <><p className="panel-intro">A few things, tucked away.</p><div className="menu-items">{([{ id: 'history', title: 'History & totals', description: 'See your rituals add up.', icon: <History /> }, { id: 'settings', title: 'Settings', description: 'Timings, theme & cold finish.', icon: <Settings2 /> }, { id: 'tests', title: 'Test the essentials', description: 'Check sound & screen awake.', icon: <FlaskConical /> }] as const).map(item => <button className="menu-item" key={item.id} onClick={() => setPanel(item.id)} disabled={!!run && item.id !== 'tests'}>{item.icon}<span className="row-copy"><strong>{item.title}</strong><small>{item.description}</small></span><ChevronRight size={18} /></button>)}</div>{run && <p className="hint">Your shower is running. Settings and history are available afterwards.</p>}<div className="menu-footer"><Droplets size={25} /><strong>Shower Timer</strong><small>Made for a slower moment. v{version}</small><p>Works offline after the first load.<br />No accounts. No tracking. No cloud.</p></div></>}
-      {panel === 'settings' && <SettingsPanel settings={settings} onSave={s => { setData(d => ({ ...d, settings: s })); setPanel(null); setToast('Your preferences are saved.'); }} />}
+      {panel === 'settings' && <SettingsPanel settings={settings} onDraftChange={setSettingsDraft} onSave={s => { setData(d => ({ ...d, settings: s })); setSettingsDraft(null); setPanel(null); setToast('Your preferences are saved.'); }} />}
       {panel === 'history' && <><HistoryPanel sessions={data.sessions} onDelete={remove} />{data.sessions.length > 0 && <button className="text-button danger center" onClick={() => setConfirmClear(true)}><Trash2 size={16} />Clear all history</button>}</>}
       {panel === 'tests' && <><p className="panel-intro">A quick check before you step in.</p><div className="test-card"><Volume2 /><h3>Can you hear it?</h3><p>One beep for a warning. Three at the end.<br />Check your phone’s volume too.</p><div className="test-actions"><button className="secondary" onClick={async () => { const ok = await unlockAudio(); setSoundStatus(ok && beep('warning', settings.signal) ? 'Warning played — did you hear it?' : 'Audio unavailable'); }}>1 beep</button><button className="secondary" onClick={async () => { const ok = await unlockAudio(); setSoundStatus(ok && beep('end', settings.signal) ? 'End signal played — did you hear it?' : 'Audio unavailable'); }}>3 beeps</button></div><small role="status">{soundStatus}</small></div>
         <div className="test-card"><span className="vibration-icon" aria-hidden="true">📳</span><h3>Feel the signal</h3><p>Vibration depends on your browser, device and phone settings. iPhone/Safari does not support timer vibration.</p><button className="secondary" disabled={typeof navigator.vibrate !== 'function'} onClick={() => setVibrationStatus(vibrate('end') ? 'Request sent — did you feel three pulses?' : 'Vibration request was not accepted.')}>Test vibration</button><small role="status">{typeof navigator.vibrate === 'function' ? vibrationStatus : 'Not supported by this browser'}</small></div>
@@ -269,5 +286,18 @@ export default function App() {
     {notification}</Sheet>}
     {confirmStop && run && <Sheet title="Finish here?" onClose={() => setConfirmStop(false)}><p className="panel-intro">Save this shower as stopped early, discard it without saving, or keep going.</p><button className="primary" onClick={() => saveResult(finish(run, Date.now(), false))}>Save & end shower</button><button className="secondary full" onClick={() => setConfirmStop(false)}>Keep going</button><button className="text-button danger center" onClick={() => { setRun(null); setResult(null); setConfirmStop(false); setToast('Shower discarded. Nothing saved.'); }}><Trash2 size={16} />Discard shower</button></Sheet>}
     {confirmClear && <Sheet title="Clear your history?" onClose={() => setConfirmClear(false)}><p className="panel-intro">This permanently removes all shower entries on this device. Your preferences stay.</p><button className="primary destructive" onClick={() => { setData(d => ({ ...d, sessions: [] })); setDeleted(null); setConfirmClear(false); setToast('History cleared.'); }}>Clear all history</button><button className="secondary full" onClick={() => setConfirmClear(false)}>Keep my history</button></Sheet>}
+    {pendingPanel && <Sheet title="Save your changes?" onClose={() => setPendingPanel(null)}>
+      <p className="panel-intro">You’ve changed your preferences. Save them before leaving?</p>
+      {pendingError && <p className="error" role="alert">{pendingError}</p>}
+      <button className="primary" onClick={() => {
+        if (!settingsDraft) return;
+        const validation = settingsError(settingsDraft);
+        if (validation) { setPendingError(validation); return; }
+        setData(d => ({ ...d, settings: normalizeSettings(settingsDraft) }));
+        setSettingsDraft(null); setPanel(pendingPanel.next); setPendingPanel(null); setToast('Your preferences are saved.');
+      }}>Save changes</button>
+      <button className="secondary full" onClick={() => setPendingPanel(null)}>Keep editing</button>
+      <button className="text-button danger center" onClick={() => { setSettingsDraft(null); setPanel(pendingPanel.next); setPendingPanel(null); }}>Discard changes</button>
+    </Sheet>}
   </div>;
 }

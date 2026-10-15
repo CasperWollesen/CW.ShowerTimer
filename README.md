@@ -45,6 +45,13 @@ The development server intentionally does not register one.
 - **History:** phase times, sums, averages, cold time and a weekly chart. Completed showers
   count towards totals. Pauses and cold preparation do not count.
 - **Themes:** dark default, light in Settings.
+- **Time pickers:** native minute/second selectors with 5-second steps, including warning times.
+  Existing more precise values are preserved until changed. Mobile presentation follows the OS/browser.
+- **Unsaved settings:** closing Settings or returning to the menu offers Save, Discard or Keep editing.
+  Invalid preferences cannot be saved from either route. Where supported, leaving/reloading the page
+  also triggers the browser's own unsaved-work warning.
+- **Sound selection:** each tone has its own 1-beep/3-beep tests without changing the selection.
+  The louder tone has a deeper pitch. A new sample replaces any sample still playing.
 - **Discard:** choose End shower → Discard shower to leave a test run without saving history.
 
 Settings and history live in localStorage. No backend, account, sync, tracking or remote
