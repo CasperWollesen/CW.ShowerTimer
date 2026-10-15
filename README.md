@@ -27,10 +27,20 @@ The development server intentionally does not register one.
 ## Features
 
 - **Guide me:** timed wet → unlimited soap → timed rinse. Timings and warnings are independent.
+- **Accurate water stops:** during soap, choose “Water off just now” if you kept the first
+  water phase running after the beep. That time moves from soap back to Get wet.
+  Rinse keeps counting past its target until you choose “Stopped just now” (include overtime)
+  or “Stopped on time” (ignore the forgotten final tap).
 - **Just measure:** tap to move through each phase, without targets.
 - **Cold finish:** optional stopwatch or hidden random duration within your range. Start when
   the water is cold. A surprise has no countdown, progress indicator or warning beep.
-- **Sound:** one warning beep, three at the end. Test both from the menu.
+- **Sound:** one warning beep, three at the end. Louder, longer tones by default, with a gentle
+  option and a preview in Settings. The phone's media volume still determines actual loudness.
+- **Vibration:** optional warning/end patterns and a hardware test. Supported Android browsers
+  can vibrate; iPhone/Safari does not support timed PWA vibration. An accepted request alone
+  does not prove the device has a vibration motor or that its settings allow it.
+- **Share:** expand Share Shower Timer in Settings for a local QR code, Copy link and native
+  sharing where supported. It always shares the public Pages URL, never local history/preferences.
 - **Screen awake:** automatically requested during a shower, with status and a test.
 - **History:** phase times, sums, averages, cold time and a weekly chart. Completed showers
   count towards totals. Pauses and cold preparation do not count.

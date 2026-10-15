@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { advance, defaults, elapsed, finish, normalizeSettings, phaseLimit, randomDuration, startRun, togglePause, total } from './domain';
+import { advance, confirmWaterStop, defaults, elapsed, finish, normalizeSettings, phaseLimit, randomDuration, startRun, togglePause, total, wetDeadline } from './domain';
 
 describe('shower timing', () => {
   it('uses timestamps so delayed ticks do not slow the clock', () => {
@@ -58,5 +58,62 @@ describe('stored settings', () => {
     const value = normalizeSettings({ wet: -5, wetWarning: 30, rinse: NaN, coldMin: 50, coldMax: 2 });
     expect(value.wet).toBe(1); expect(value.wetWarning).toBe(0);
     expect(value.rinse).toBe(120); expect(value.coldMax).toBe(50);
+  });
+});
+
+describe('late water stop confirmation', () => {
+  it('counts soap from the wet beep when water was stopped on time', () => {
+    const run = wetDeadline(startRun(defaults, 0));
+    const corrected = confirmWaterStop(run, 150000, 'onTime');
+    expect(corrected.phase).toBe('soap'); expect(corrected.wetNeedsConfirmation).toBe(false);
+    expect(corrected.durations.wet).toBe(120); expect(elapsed(corrected, 150000)).toBe(30);
+  });
+  it('moves time from soap back to wet when water was only turned off now', () => {
+    const run = wetDeadline(startRun(defaults, 0));
+    const corrected = confirmWaterStop(run, 150000, 'now');
+    expect(corrected.durations.wet).toBe(150); expect(elapsed(corrected, 150000)).toBe(0);
+    const rinsing = advance(corrected, 180000)!;
+    expect(rinsing.durations.soap).toBe(30);
+    expect(total(finish(rinsing, 200000, true))).toBe(200);
+    expect(confirmWaterStop(corrected, 180000, 'now')).toBe(corrected);
+  });
+  it('does not include paused time in a late wet correction', () => {
+    let run = wetDeadline(startRun(defaults, 0));
+    run = togglePause(run, 130000); run = togglePause(run, 200000);
+    run = confirmWaterStop(run, 210000, 'now');
+    expect(run.durations.wet).toBe(140); expect(elapsed(run, 220000)).toBe(10);
+  });
+  it('keeps a paused soap phase paused after correcting the wet time', () => {
+    let run = togglePause(wetDeadline(startRun(defaults, 0)), 130000);
+    run = confirmWaterStop(run, 200000, 'now');
+    expect(run.durations.wet).toBe(130); expect(elapsed(run, 250000)).toBe(0);
+    run = togglePause(run, 250000); expect(elapsed(run, 260000)).toBe(10);
+  });
+  it('preserves a soap interval if the user simply moves on to rinse', () => {
+    const run = advance(wetDeadline(startRun(defaults, 0)), 160000)!;
+    expect(run.durations.wet).toBe(120); expect(run.durations.soap).toBe(40);
+    expect(run.wetNeedsConfirmation).toBe(false);
+  });
+  it('records extra rinse time when the water stops now', () => {
+    let run = advance(wetDeadline(startRun(defaults, 0)), 180000)!;
+    run = confirmWaterStop(run, 360000, 'now');
+    const session = finish(run, 360000, true);
+    expect(session.durations.rinse).toBe(180); expect(total(session)).toBe(360);
+  });
+  it('excludes the forgotten final tap when the water stopped on time', () => {
+    let run = advance(wetDeadline(startRun({ ...defaults, coldEnabled: true }, 0)), 180000)!;
+    run = confirmWaterStop(run, 360000, 'onTime');
+    expect(finish(run, 360000, true).durations.rinse).toBe(120);
+    run = advance(run, 360000)!; expect(run.phase).toBe('coldReady');
+    run = advance(run, 400000)!;
+    const session = finish(run, 410000, true);
+    expect(session.durations).toEqual({ wet: 120, soap: 60, rinse: 120, cold: 10 });
+    expect(total(session)).toBe(310);
+  });
+  it('leaves free measurement untouched', () => {
+    let run = advance(startRun({ ...defaults, mode: 'measure' }, 0), 10000)!;
+    run = advance(run, 20000)!;
+    expect(confirmWaterStop(run, 30000, 'onTime')).toBe(run);
+    expect(wetDeadline(startRun({ ...defaults, mode: 'measure' }, 0)).phase).toBe('wet');
   });
 });

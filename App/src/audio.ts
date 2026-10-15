@@ -10,16 +10,23 @@ export async function unlockAudio(): Promise<boolean> {
     return context.state === 'running';
   } catch { return false; }
 }
-export function beep(kind: 'warning' | 'end'): boolean {
+export function beep(kind: 'warning' | 'end', signal: 'gentle' | 'strong' = 'strong'): boolean {
   if (!context || context.state !== 'running') return false;
   const count = kind === 'warning' ? 1 : 3;
+  const strong = signal === 'strong';
+  const duration = strong ? 0.6 : 0.25;
   for (let i = 0; i < count; i++) {
-    const start = context.currentTime + i * 0.28;
+    const start = context.currentTime + i * (duration + 0.18);
     const oscillator = context.createOscillator(), gain = context.createGain();
-    oscillator.type = 'sine'; oscillator.frequency.value = kind === 'warning' ? 740 : 920;
-    gain.gain.setValueAtTime(0, start); gain.gain.linearRampToValueAtTime(0.24, start + 0.015);
-    gain.gain.exponentialRampToValueAtTime(0.001, start + 0.17);
-    oscillator.connect(gain); gain.connect(context.destination); oscillator.start(start); oscillator.stop(start + 0.19);
+    oscillator.type = strong ? 'triangle' : 'sine'; oscillator.frequency.value = kind === 'warning' ? 740 : 920;
+    gain.gain.setValueAtTime(0, start); gain.gain.linearRampToValueAtTime(strong ? 0.65 : 0.24, start + 0.02);
+    gain.gain.setValueAtTime(strong ? 0.65 : 0.24, start + duration - 0.09);
+    gain.gain.exponentialRampToValueAtTime(0.001, start + duration);
+    oscillator.connect(gain); gain.connect(context.destination); oscillator.start(start); oscillator.stop(start + duration + 0.02);
   }
   return true;
+}
+export function vibrate(kind: 'warning' | 'end'): boolean {
+  try { return typeof navigator.vibrate === 'function' && navigator.vibrate(kind === 'warning' ? [250] : [400, 180, 400, 180, 650]); }
+  catch { return false; }
 }

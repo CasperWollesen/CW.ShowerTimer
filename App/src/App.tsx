@@ -2,10 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { ArrowLeft, ArrowRight, Check, ChevronRight, Clock3, Droplets, FlaskConical, History, Menu, Moon, Pause, Play, Settings2, ShieldCheck, Snowflake, Sun, Trash2, Volume2, X } from 'lucide-react';
 import { useRegisterSW } from 'virtual:pwa-register/react';
-import { advance, elapsed, finish, formatTime, normalizeSettings, phaseLimit, startRun, togglePause, total } from './domain';
+import { advance, confirmWaterStop, elapsed, finish, formatTime, normalizeSettings, phaseLimit, startRun, togglePause, total, wetDeadline } from './domain';
 import type { Phase, Run, Session, Settings } from './domain';
 import { readData, saveData } from './storage';
-import { beep, unlockAudio } from './audio';
+import { beep, unlockAudio, vibrate } from './audio';
+import { Share } from './Share';
+import { version } from '../package.json';
 
 type Panel = 'menu' | 'settings' | 'history' | 'tests' | null;
 const phaseText: Record<Phase, { title: string; caption: string; emoji: string }> = {
@@ -90,7 +92,11 @@ function SettingsPanel({ settings, onSave }: { settings: Settings; onSave: (s: S
       <div className="divider" /><DurationInput label="💧 Rinse off" value={draft.rinse} onChange={rinse => patch({ rinse })} />
       <label className="number-row">Warn me before the end <span><input type="number" min="0" max="3599" value={draft.rinseWarning} required onChange={e => patch({ rinseWarning: Number(e.target.value) })} /> sec</span></label>
     </div><p className="hint">Soaping has no time limit. Set a warning to 0 for no warning.</p>
-    <h3>Sound</h3><div className="settings-card"><Toggle checked={draft.sound} onChange={sound => patch({ sound })} label="Gentle beeps" description="One for a warning. Three when time is up." icon={<Volume2 size={20} />} /></div>
+    <h3>Sound & vibration</h3><div className="settings-card"><Toggle checked={draft.sound} onChange={sound => patch({ sound })} label="Beep alerts" description="One for a warning. Three when time is up." icon={<Volume2 size={20} />} />
+      {draft.sound && <><div className="segmented"><button type="button" className={draft.signal === 'gentle' ? 'selected' : ''} onClick={() => patch({ signal: 'gentle' })}>Gentle</button><button type="button" className={draft.signal === 'strong' ? 'selected' : ''} onClick={() => patch({ signal: 'strong' })}>Louder & longer</button></div><button type="button" className="text-button" onClick={async () => { if (await unlockAudio()) beep('end', draft.signal); }}>Preview 3 beeps</button><p className="hint">Your phone’s media volume controls the final loudness.</p></>}
+      <div className="divider" /><Toggle checked={draft.vibration} onChange={vibration => patch({ vibration })} label="Vibrate with alerts" description="Optional extra feedback on supported phones." />
+      <p className="hint">{typeof navigator.vibrate === 'function' ? 'This browser exposes vibration. Try the vibration test on your phone to check the hardware.' : 'Vibration alerts are not supported by this browser. Use sound on iPhone/Safari.'}</p>
+    </div>
     <h3>Cold finish</h3><div className="settings-card"><Toggle checked={draft.coldEnabled} onChange={coldEnabled => patch({ coldEnabled })} label="Finish with cold water" description="Always starts with your own tap." icon={<Snowflake size={20} />} />
       {draft.coldEnabled && <><div className="divider" /><div className="segmented"><button type="button" className={draft.coldMode === 'measure' ? 'selected' : ''} onClick={() => patch({ coldMode: 'measure' })}>Measure</button><button type="button" className={draft.coldMode === 'random' ? 'selected' : ''} onClick={() => patch({ coldMode: 'random' })}>Surprise me</button></div>
         <p className="hint">{draft.coldMode === 'random' ? 'A random duration within your range. No countdown or warning gives it away.' : 'An open-ended stopwatch. Finish whenever you’re ready.'}</p>
@@ -98,6 +104,7 @@ function SettingsPanel({ settings, onSave }: { settings: Settings; onSave: (s: S
       </>}
     </div>{error && <p className="error" role="alert">{error}</p>}
     <button className="primary sticky-action" type="submit"><Check size={19} />Save settings</button>
+    <Share />
   </form>;
 }
 
@@ -136,12 +143,14 @@ export default function App() {
   const [deleted, setDeleted] = useState<Session | null>(null);
   const [testWake, setTestWake] = useState(false);
   const [soundStatus, setSoundStatus] = useState('Not tested');
+  const [vibrationStatus, setVibrationStatus] = useState('Not tested');
   const [storageOk, setStorageOk] = useState(true);
   const [confirmStop, setConfirmStop] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const wake = useWakeLock(!!run || testWake);
   const { needRefresh: [needRefresh], updateServiceWorker } = useRegisterSW();
   const warned = useRef<string | null>(null);
+  const endSignalled = useRef<string | null>(null);
   const runRef = useRef(run); runRef.current = run;
   const settings = data.settings;
 
@@ -166,10 +175,10 @@ export default function App() {
     setData(d => ({ ...d, sessions: [session, ...d.sessions] }));
     setResult(session); setRun(null); setConfirmStop(false);
   }, []);
-  const goNext = () => {
+  const goNext = (when: 'onTime' | 'now' = 'now') => {
     if (!run) return;
-    const at = Date.now(), next = advance(run, at);
-    if (next) { setRun(next); setNow(at); } else saveResult(finish(run, at, true));
+    const at = Date.now(), stopped = run.phase === 'rinse' ? confirmWaterStop(run, at, when) : run, next = advance(stopped, at);
+    if (next) { setRun(next); setNow(at); } else saveResult(finish(stopped, at, true));
   };
   useEffect(() => {
     if (!run || run.pausedAt !== null || document.visibilityState !== 'visible') return;
@@ -177,21 +186,28 @@ export default function App() {
     if (limit === null) return;
     const spent = elapsed(run, now);
     const warning = run.phase === 'wet' ? run.settings.wetWarning : run.phase === 'rinse' ? run.settings.rinseWarning : 0;
+    const id = `${run.startedAt}:${run.phase}`;
     if (spent >= limit) {
-      if (run.settings.sound && !beep('end')) setToast('Sound is unavailable. Check the sound test before your next shower.');
-      // End exactly at the deadline, even if the browser delayed a timer tick.
-      const deadline = run.phaseStartedAt + limit * 1000;
-      const next = advance(run, deadline);
-      if (next) setRun(next); else saveResult(finish(run, deadline, true));
+      if (endSignalled.current !== id) {
+        endSignalled.current = id;
+        if (run.settings.sound && !beep('end', run.settings.signal)) setToast('Sound is unavailable. Check the sound test before your next shower.');
+        if (run.settings.vibration) vibrate('end');
+      }
+      if (run.phase === 'wet') setRun(wetDeadline(run));
+      // Rinse keeps measuring overtime until the user confirms when the water stopped.
+      else if (run.phase === 'cold') saveResult(finish(run, run.phaseStartedAt + limit * 1000, true));
     } else if (warning > 0 && spent >= limit - warning) {
-      const id = `${run.startedAt}:${run.phase}`;
-      if (warned.current !== id) { warned.current = id; if (run.settings.sound && !beep('warning')) setToast('Sound is unavailable.'); }
+      if (warned.current !== id) {
+        warned.current = id;
+        if (run.settings.sound && !beep('warning', run.settings.signal)) setToast('Sound is unavailable.');
+        if (run.settings.vibration) vibrate('warning');
+      }
     }
   }, [run, now, saveResult]);
   const patchSettings = (patch: Partial<Settings>) => setData(d => ({ ...d, settings: normalizeSettings({ ...d.settings, ...patch }) }));
   const start = () => {
     if (settings.sound) void unlockAudio().then(ok => { if (!ok) setToast('Audio could not start. Try the sound test in the menu.'); });
-    const at = Date.now(); warned.current = null; setResult(null); setNow(at); setRun(startRun(settings, at));
+    const at = Date.now(); warned.current = null; endSignalled.current = null; setResult(null); setNow(at); setRun(startRun(settings, at));
   };
   const remove = (id: string) => {
     const session = data.sessions.find(s => s.id === id);
@@ -201,6 +217,7 @@ export default function App() {
   const limit = run ? phaseLimit(run) : null;
   const hidden = run?.phase === 'cold' && run.coldTarget !== null;
   const ready = run?.phase === 'coldReady';
+  const rinseOvertime = run?.phase === 'rinse' && limit !== null && time >= limit;
   const phaseInfo = run ? phaseText[run.phase] : null;
   const progress = run && limit && !hidden ? Math.min(1, time / limit) : 0;
   const latest = data.sessions.find(s => s.complete);
@@ -221,16 +238,19 @@ export default function App() {
         <p className="below-button">Set your phone down. Take a breath.</p>
         {latest && <button className="last-shower" onClick={() => setPanel('history')}><History size={15} />Last shower <strong>{formatTime(total(latest))}</strong><ChevronRight size={15} /></button>}
       </>}
-      {run && phaseInfo && <section className={'active-view ' + (run.phase.startsWith('cold') ? 'is-cold' : '')}>
+      {run && phaseInfo && <section className={'active-view ' + (run.phase.startsWith('cold') ? 'is-cold ' : '') + (run.wetNeedsConfirmation || rinseOvertime ? 'awaiting-water-stop' : '')}>
         <div className="phase-stepper" aria-label="Current phase">{(['wet', 'soap', 'rinse', ...(run.settings.coldEnabled ? ['cold'] : [])] as Phase[]).map((p, i) => <span className={run.phase === p || (p === 'cold' && ready) ? 'current' : ''} key={p}><span>{i + 1}</span>{p === 'wet' ? 'Wet' : p === 'soap' ? 'Soap' : p === 'rinse' ? 'Rinse' : 'Cold'}</span>)}</div>
         <div className="active-heading"><h1>{phaseInfo.title}</h1><p>{phaseInfo.caption}</p></div>
         <div className={'timer-ring ' + (hidden || ready ? 'mystery' : '')}>
           <svg className="ring-svg" viewBox="0 0 300 300" aria-hidden="true"><circle className="ring-track" cx="150" cy="150" r="138" /><circle className="ring-progress" cx="150" cy="150" r="138" strokeDasharray="867.08" strokeDashoffset={867.08 * (1 - progress)} /></svg>
-          <div className="timer-content"><span className="phase-emoji">{phaseInfo.emoji}</span>{hidden || ready ? <><strong className="mystery-label">{ready ? 'Your moment.' : 'Stay present.'}</strong><small>{ready ? 'Start when the water is cold' : run.pausedAt !== null ? 'Paused' : 'Listen for the three beeps'}</small></> : <><strong className="timer-number">{formatTime(limit !== null ? Math.ceil(Math.max(0, limit - time)) : time)}</strong><small>{run.pausedAt !== null ? 'Paused' : limit !== null ? 'remaining' : 'take your time'}</small></>}</div>
+          <div className="timer-content"><span className="phase-emoji">{phaseInfo.emoji}</span>{hidden || ready ? <><strong className="mystery-label">{ready ? 'Your moment.' : 'Stay present.'}</strong><small>{ready ? 'Start when the water is cold' : run.pausedAt !== null ? 'Paused' : 'Listen for the three beeps'}</small></> : <><strong className="timer-number">{rinseOvertime ? `+${formatTime(time - limit!)}` : formatTime(limit !== null ? Math.ceil(Math.max(0, limit - time)) : time)}</strong><small>{run.pausedAt !== null ? 'Paused' : rinseOvertime ? 'past your target' : limit !== null ? 'remaining' : 'take your time'}</small></>}</div>
         </div>
         {run.phase === 'soap' && <p className="phase-note">No timer to beat. Tap below when you’re ready to rinse.</p>}
+        {run.phase === 'soap' && run.wetNeedsConfirmation && <div className="water-confirmation"><strong>When did you turn the water off?</strong><p>Soap time starts at the beep. If you kept the water running, we’ll move that time back to Get wet.</p><div><button className="secondary" onClick={() => setRun(confirmWaterStop(run, Date.now(), 'onTime'))}>Stopped on time</button><button className="secondary" onClick={() => { const at = Date.now(); setRun(confirmWaterStop(run, at, 'now')); setNow(at); setToast('Water time corrected. Soap timer starts now.'); }}>Water off just now</button></div></div>}
         {hidden && !run.settings.sound && <p className="phase-note">Sound is off. The screen will change when you’re done.</p>}
-        <button className="primary" onClick={goNext}>{ready ? <><Snowflake size={19} />Start cold water</> : run.phase === 'wet' ? <>Time to soap up<ArrowRight size={19} /></> : run.phase === 'soap' ? <>Start rinsing<ArrowRight size={19} /></> : run.phase === 'rinse' && run.settings.coldEnabled ? <>Ready for cold<ArrowRight size={19} /></> : <><Check size={19} />{run.phase === 'cold' ? 'Finish now' : 'Finish shower'}</>}</button>
+        {rinseOvertime && <p className="phase-note">Still measuring. Did you stop at the beep, or just now?</p>}
+        <button className="primary" onClick={() => goNext()}>{rinseOvertime ? <><Check size={19} />Stopped just now</> : ready ? <><Snowflake size={19} />Start cold water</> : run.phase === 'wet' ? <>Time to soap up<ArrowRight size={19} /></> : run.phase === 'soap' ? <>Start rinsing<ArrowRight size={19} /></> : run.phase === 'rinse' && run.settings.coldEnabled ? <>Ready for cold<ArrowRight size={19} /></> : <><Check size={19} />{run.phase === 'cold' ? 'Finish now' : 'Finish shower'}</>}</button>
+        {rinseOvertime && <button className="secondary full" onClick={() => goNext('onTime')}>Stopped on time</button>}
         <div className="active-actions">{!ready && <button className="secondary" onClick={() => { setRun(togglePause(run, Date.now())); setNow(Date.now()); }}>{run.pausedAt !== null ? <Play size={16} /> : <Pause size={16} />}{run.pausedAt !== null ? 'Resume' : 'Pause'}</button>}{ready && <button className="secondary" onClick={() => saveResult(finish(run, Date.now(), true))}>Skip cold finish</button>}<button className="text-button muted" onClick={() => setConfirmStop(true)}>End shower</button></div>
         <button className="wake-status text-button" onClick={wake.retry}><span className={'status-dot ' + (wake.status === 'On' ? '' : 'warning')} />{wake.status === 'On' ? 'Keeping your screen awake' : `Screen awake: ${wake.status.toLowerCase()} · retry`}</button>
         {wake.status !== 'On' && <p className="hint">Keep the app visible. Screen lock and switching apps can interrupt sound.</p>}
@@ -242,10 +262,11 @@ export default function App() {
     {needRefresh && !run && <div className="update-banner">A fresh version is ready.<button className="text-button" onClick={() => void updateServiceWorker(true)}>Update</button></div>}
     {!panel && notification}
     {panel && <Sheet title={panel === 'menu' ? 'Make yourself at home.' : panel === 'settings' ? 'Your preferences' : panel === 'history' ? 'Your little rituals' : 'Try it out'} onClose={() => setPanel(null)} back={panel !== 'menu' ? () => setPanel('menu') : undefined}>
-      {panel === 'menu' && <><p className="panel-intro">A few things, tucked away.</p><div className="menu-items">{([{ id: 'history', title: 'History & totals', description: 'See your rituals add up.', icon: <History /> }, { id: 'settings', title: 'Settings', description: 'Timings, theme & cold finish.', icon: <Settings2 /> }, { id: 'tests', title: 'Test the essentials', description: 'Check sound & screen awake.', icon: <FlaskConical /> }] as const).map(item => <button className="menu-item" key={item.id} onClick={() => setPanel(item.id)} disabled={!!run && item.id !== 'tests'}>{item.icon}<span className="row-copy"><strong>{item.title}</strong><small>{item.description}</small></span><ChevronRight size={18} /></button>)}</div>{run && <p className="hint">Your shower is running. Settings and history are available afterwards.</p>}<div className="menu-footer"><Droplets size={25} /><strong>Shower Timer</strong><small>Made for a slower moment. v0.1.0</small><p>Works offline after the first load.<br />No accounts. No tracking. No cloud.</p></div></>}
+      {panel === 'menu' && <><p className="panel-intro">A few things, tucked away.</p><div className="menu-items">{([{ id: 'history', title: 'History & totals', description: 'See your rituals add up.', icon: <History /> }, { id: 'settings', title: 'Settings', description: 'Timings, theme & cold finish.', icon: <Settings2 /> }, { id: 'tests', title: 'Test the essentials', description: 'Check sound & screen awake.', icon: <FlaskConical /> }] as const).map(item => <button className="menu-item" key={item.id} onClick={() => setPanel(item.id)} disabled={!!run && item.id !== 'tests'}>{item.icon}<span className="row-copy"><strong>{item.title}</strong><small>{item.description}</small></span><ChevronRight size={18} /></button>)}</div>{run && <p className="hint">Your shower is running. Settings and history are available afterwards.</p>}<div className="menu-footer"><Droplets size={25} /><strong>Shower Timer</strong><small>Made for a slower moment. v{version}</small><p>Works offline after the first load.<br />No accounts. No tracking. No cloud.</p></div></>}
       {panel === 'settings' && <SettingsPanel settings={settings} onSave={s => { setData(d => ({ ...d, settings: s })); setPanel(null); setToast('Your preferences are saved.'); }} />}
       {panel === 'history' && <><HistoryPanel sessions={data.sessions} onDelete={remove} />{data.sessions.length > 0 && <button className="text-button danger center" onClick={() => setConfirmClear(true)}><Trash2 size={16} />Clear all history</button>}</>}
-      {panel === 'tests' && <><p className="panel-intro">A quick check before you step in.</p><div className="test-card"><Volume2 /><h3>Can you hear it?</h3><p>One beep for a warning. Three at the end.<br />Check your phone’s volume too.</p><div className="test-actions"><button className="secondary" onClick={async () => { const ok = await unlockAudio(); setSoundStatus(ok && beep('warning') ? 'Warning played — did you hear it?' : 'Audio unavailable'); }}>1 beep</button><button className="secondary" onClick={async () => { const ok = await unlockAudio(); setSoundStatus(ok && beep('end') ? 'End signal played — did you hear it?' : 'Audio unavailable'); }}>3 beeps</button></div><small role="status">{soundStatus}</small></div>
+      {panel === 'tests' && <><p className="panel-intro">A quick check before you step in.</p><div className="test-card"><Volume2 /><h3>Can you hear it?</h3><p>One beep for a warning. Three at the end.<br />Check your phone’s volume too.</p><div className="test-actions"><button className="secondary" onClick={async () => { const ok = await unlockAudio(); setSoundStatus(ok && beep('warning', settings.signal) ? 'Warning played — did you hear it?' : 'Audio unavailable'); }}>1 beep</button><button className="secondary" onClick={async () => { const ok = await unlockAudio(); setSoundStatus(ok && beep('end', settings.signal) ? 'End signal played — did you hear it?' : 'Audio unavailable'); }}>3 beeps</button></div><small role="status">{soundStatus}</small></div>
+        <div className="test-card"><span className="vibration-icon" aria-hidden="true">📳</span><h3>Feel the signal</h3><p>Vibration depends on your browser, device and phone settings. iPhone/Safari does not support timer vibration.</p><button className="secondary" disabled={typeof navigator.vibrate !== 'function'} onClick={() => setVibrationStatus(vibrate('end') ? 'Request sent — did you feel three pulses?' : 'Vibration request was not accepted.')}>Test vibration</button><small role="status">{typeof navigator.vibrate === 'function' ? vibrationStatus : 'Not supported by this browser'}</small></div>
         <div className="test-card"><Sun /><h3>Stay awake</h3><p>Start this test and leave the screen untouched. It should stay on beyond your usual auto-lock time.</p><button className="secondary" disabled={!!run} onClick={() => setTestWake(v => !v)}>{run ? 'Active during your shower' : testWake ? 'Stop screen test' : 'Test screen awake'}</button><small role="status">Screen awake: {wake.status}</small></div><p className="hint">Sound tests play even when shower sound is off. Screen awake needs a supported browser and a secure connection. Test again on your phone before using it in the shower.</p></>}
     {notification}</Sheet>}
     {confirmStop && run && <Sheet title="Finish here?" onClose={() => setConfirmStop(false)}><p className="panel-intro">Save this shower as stopped early, discard it without saving, or keep going.</p><button className="primary" onClick={() => saveResult(finish(run, Date.now(), false))}>Save & end shower</button><button className="secondary full" onClick={() => setConfirmStop(false)}>Keep going</button><button className="text-button danger center" onClick={() => { setRun(null); setResult(null); setConfirmStop(false); setToast('Shower discarded. Nothing saved.'); }}><Trash2 size={16} />Discard shower</button></Sheet>}
