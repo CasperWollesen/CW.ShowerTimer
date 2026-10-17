@@ -28,6 +28,33 @@ Phone-first, English, minimal home screen. Preferences, history and diagnostics 
   save blocking and reverted edits leaving without a prompt. Previews leave the saved selection
   unchanged. Layout inspected at 375px with no horizontal overflow; no browser errors.
 
+## Visible phases, undo and mini fit, version 0.4.0
+- Every shower state fits 375×629 (iPhone 13 mini in Safari) without scrolling. The active view is a
+  flex column; the timer ring takes the leftover height (container query units, 130–300px).
+  Short screens (≤700px) tighten gaps, header, title and lane. Home and result were compacted too.
+- Removed helper captions and notes from the shower screen (phase captions, soap note, water-stop
+  explanation, overtime note, "Keeping your screen awake"). The wake line only appears on failure.
+- Phase scenes override the theme tokens via `data-phase` on the root: blue wet, pink soap,
+  green rinse, light frost for coldReady/cold in both themes. theme-color follows the scene.
+- Chunky stepper chips, thicker ring, a 1.6s phase badge on entry and a fade between phase colours.
+- Lane under the ring: timed guided phases fill like a striped progress bar with the phase emoji
+  at the edge; overtime pulses. Untimed phases and cold show a looping emoji parade with irregular
+  periods; a cold surprise never gets a fill. coldReady shows shivering ice and a polar bear.
+  Ambient drops/bubbles/snow drift behind the ring. Pause freezes animations; reduced motion hides
+  ambient particles and lays the parade out statically.
+- Just measure with cold: coldReady offers Just count / Surprise me. `startRun` draws the hidden
+  surprise (`coldSurprise`) before the shower; `chooseCold` only applies it during coldReady.
+- Undo (8s) for manual transitions and finishing. `undoAdvance` restores the previous phase,
+  counting active time after the tap and keeping a later pause excluded. An undone finish removes
+  its history entry. Automatic transitions (wet deadline, surprise end) cannot be undone.
+- Rinse overtime shows Stopped on time / Stopped just now side by side; soap keeps its two-button
+  water-stop question without the explanatory paragraph.
+- Verification: typecheck, all 37 tests and production build pass. Browser-checked at 375×629:
+  home, wet, soap with water-stop question plus wake warning (worst case), rinse, overtime,
+  coldReady, cold surprise, cold count, measure-mode cold choice, pause and result all fit; undo
+  from rinse/coldReady/result worked. Also checked 375×728, 320×568 (soap question scrolls slightly),
+  light theme and desktop. No console errors. Real iPhone rendering and animation smoothness remain device QA.
+
 ## Behavior
 - Guided: timed wet → unlimited soap → timed rinse. Wet advances at its target; rinse waits for confirmation.
 - Measure: stopwatch per phase with manual transitions.

@@ -14,6 +14,8 @@ export interface Session {
 export interface Run {
   settings: Settings; phase: Phase; startedAt: number; phaseStartedAt: number;
   pausedAt: number | null; durations: Session['durations']; coldTarget: number | null;
+  /** Hidden duration drawn before the shower. Just measure may still pick it once the water is cold. */
+  coldSurprise: number | null;
   wetNeedsConfirmation: boolean;
 }
 export const defaults: Settings = {
@@ -39,9 +41,26 @@ export function randomDuration(min: number, max: number, random = Math.random): 
 }
 export function startRun(settings: Settings, now: number): Run {
   const snapshot = normalizeSettings(settings);
+  const surprise = snapshot.coldEnabled && (snapshot.coldMode === 'random' || snapshot.mode === 'measure') ? randomDuration(snapshot.coldMin, snapshot.coldMax) : null;
   return { settings: snapshot, phase: 'wet', startedAt: now, phaseStartedAt: now, pausedAt: null,
     durations: { wet: 0, soap: 0, rinse: 0, cold: 0 }, wetNeedsConfirmation: false,
-    coldTarget: snapshot.coldEnabled && snapshot.coldMode === 'random' ? randomDuration(snapshot.coldMin, snapshot.coldMax) : null };
+    coldSurprise: surprise, coldTarget: snapshot.coldMode === 'random' ? surprise : null };
+}
+/** Just measure chooses a stopwatch or the surprise drawn before the shower while the water turns cold. */
+export function chooseCold(run: Run, choice: Settings['coldMode']): Run {
+  if (run.phase !== 'coldReady' || run.settings.mode !== 'measure' || run.coldSurprise === null) return run;
+  return { ...run, coldTarget: choice === 'random' ? run.coldSurprise : null };
+}
+/**
+ * Reopen the phase before an accidental tap. Active time after the tap still belongs to it;
+ * a pause in the abandoned phase stays excluded and stays paused.
+ * Without `current` (the shower was finished), time since the tap counts unless it was paused.
+ */
+export function undoAdvance(previous: Run, at: number, now: number, current?: Run): Run {
+  const paused = current ? current.pausedAt !== null : previous.pausedAt !== null;
+  const after = current ? elapsed(current, now) : paused ? 0 : Math.max(0, (now - at) / 1000);
+  const spent = elapsed(previous, at) + after;
+  return { ...previous, phaseStartedAt: now - spent * 1000, pausedAt: paused ? now : null };
 }
 export function elapsed(run: Run, now: number): number {
   return Math.max(0, ((run.pausedAt ?? now) - run.phaseStartedAt) / 1000);

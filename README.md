@@ -34,6 +34,18 @@ The development server intentionally does not register one.
 - **Just measure:** tap to move through each phase, without targets.
 - **Cold finish:** optional stopwatch or hidden random duration within your range. Start when
   the water is cold. A surprise has no countdown, progress indicator or warning beep.
+  In Just measure the cold step asks again: **Just count** or **Surprise me** (your saved choice
+  is preselected). The surprise duration is still drawn before the shower starts.
+- **Phase scenes:** each phase fills the screen with its own colour — blue wet, pink soap,
+  green rinse, bright frost for cold — plus a large phase badge when it begins. A lane below
+  the timer fills like a progress bar in timed phases; elsewhere emojis drift across it
+  (bubbles, drops, polar bears and ice cubes). Cold surprise lanes loop at irregular speeds and
+  never reflect elapsed time. Animations pause with the shower and respect reduced motion.
+- **Undo:** for 8 seconds after tapping to the next phase or finishing, Undo returns you to the
+  previous phase. Time since the tap counts towards it, pauses stay excluded, and an undone
+  finish is removed from history again.
+- **Fits small phones:** home, every shower state and the result fit a 375×629 iPhone 13 mini
+  Safari viewport without scrolling; the timer ring shrinks to the remaining height.
 - **Sound:** one warning beep, three at the end. Louder, longer tones by default, with a gentle
   option and a preview in Settings. The phone's media volume still determines actual loudness.
 - **Vibration:** optional warning/end patterns and a hardware test. Supported Android browsers
@@ -41,7 +53,8 @@ The development server intentionally does not register one.
   does not prove the device has a vibration motor or that its settings allow it.
 - **Share:** expand Share Shower Timer in Settings for a local QR code, Copy link and native
   sharing where supported. It always shares the public Pages URL, never local history/preferences.
-- **Screen awake:** automatically requested during a shower, with status and a test.
+- **Screen awake:** automatically requested during a shower, with a test in the menu. The shower
+  screen only shows a retry line when it could not be kept awake.
 - **History:** phase times, sums, averages, cold time and a weekly chart. Completed showers
   count towards totals. Pauses and cold preparation do not count.
 - **Themes:** dark default, light in Settings.

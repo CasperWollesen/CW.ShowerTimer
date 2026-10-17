@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
-import { ArrowLeft, ArrowRight, Check, ChevronRight, Clock3, Droplets, FlaskConical, History, Menu, Moon, Pause, Play, Settings2, Snowflake, Sun, Trash2, Volume2, X } from 'lucide-react';
+import type { CSSProperties, ReactNode } from 'react';
+import { ArrowLeft, ArrowRight, Check, ChevronRight, Clock3, Droplets, FlaskConical, History, Menu, Moon, Pause, Play, Settings2, Shuffle, Snowflake, Sun, Trash2, Undo2, Volume2, X } from 'lucide-react';
 import { useRegisterSW } from 'virtual:pwa-register/react';
-import { advance, confirmWaterStop, elapsed, finish, formatTime, normalizeSettings, phaseLimit, startRun, togglePause, total, wetDeadline } from './domain';
+import { advance, chooseCold, confirmWaterStop, elapsed, finish, formatTime, normalizeSettings, phaseLimit, startRun, togglePause, total, undoAdvance, wetDeadline } from './domain';
 import type { Phase, Run, Session, Settings } from './domain';
 import { readData, saveData } from './storage';
 import { beep, unlockAudio, vibrate } from './audio';
@@ -11,13 +11,41 @@ import { version } from '../package.json';
 import { pickerValues, settingsChanged, settingsError } from './preferences';
 
 type Panel = 'menu' | 'settings' | 'history' | 'tests' | null;
-const phaseText: Record<Phase, { title: string; caption: string; emoji: string }> = {
-  wet: { title: 'Ease into it.', caption: 'Water on. Let the day wash away.', emoji: '🚿' },
-  soap: { title: 'Lather. Breathe.', caption: 'Water off. Take all the time you need.', emoji: '🫧' },
-  rinse: { title: 'A fresh start.', caption: 'Water on. Rinse it all away.', emoji: '💧' },
-  coldReady: { title: 'Ready for a reset?', caption: 'Turn the water cold. Start when you’re ready.', emoji: '❄️' },
-  cold: { title: 'Find your calm.', caption: 'One breath at a time. You can stop whenever you like.', emoji: '❄️' }
+const phaseText: Record<Phase, { title: string; name: string; emoji: string }> = {
+  wet: { title: 'Ease into it.', name: 'Get wet', emoji: '🚿' },
+  soap: { title: 'Lather. Breathe.', name: 'Soap up', emoji: '🫧' },
+  rinse: { title: 'A fresh start.', name: 'Rinse off', emoji: '💧' },
+  coldReady: { title: 'Ready for a reset?', name: 'Turn it cold', emoji: '🧊' },
+  cold: { title: 'Find your calm.', name: 'Go cold', emoji: '🐻‍❄️' }
 };
+const steps = { wet: ['🚿', 'Wet'], soap: ['🫧', 'Soap'], rinse: ['💧', 'Rinse'], cold: ['❄️', 'Cold'] } as const;
+const UNDO_MS = 8000;
+
+type Drifter = [emoji: string, seconds: number, delay: number, motion: 'bob' | 'wobble' | 'spin' | 'waddle', size?: number];
+/** Looping lanes never encode time, so they are safe during a cold surprise. Irregular periods avoid countable laps. */
+const parades: Record<Exclude<Phase, 'coldReady'>, Drifter[]> = {
+  wet: [['💧', 6.3, 0, 'bob'], ['🚿', 9.7, -3.4, 'bob', 1.25], ['💧', 7.9, -5.9, 'bob', .8]],
+  soap: [['🫧', 8.3, 0, 'wobble', 1.25], ['🧼', 11.9, -4.6, 'waddle'], ['🫧', 6.7, -2.3, 'wobble', .8], ['🫧', 9.4, -7.1, 'wobble']],
+  rinse: [['💦', 7.1, 0, 'bob'], ['💧', 5.7, -2.1, 'bob', .85], ['💧', 8.9, -5.3, 'bob', 1.15]],
+  cold: [['🐻‍❄️', 12.7, 0, 'waddle', 1.35], ['🧊', 8.9, -3.7, 'bob'], ['❄️', 6.1, -1.3, 'spin', .85], ['🐧', 10.3, -7.9, 'waddle', 1.1], ['🧊', 14.3, -10.6, 'bob', .8]]
+};
+const ambient: Record<Phase, [emoji: string, direction: 'fall' | 'rise']> = { wet: ['💧', 'fall'], soap: ['🫧', 'rise'], rinse: ['💧', 'fall'], coldReady: ['❄️', 'fall'], cold: ['❄️', 'fall'] };
+const particles = [[4, 7.3, 0, .9], [17, 9.1, -4.2, .7], [30, 6.6, -2.5, 1], [50, 8.4, -6.1, .75], [66, 7.7, -1.4, .95], [80, 9.8, -5.3, .7], [92, 6.9, -3.6, .85]] as const;
+
+/** Timed phases fill like a progress bar; everything else, including a cold surprise, only loops. */
+function PhaseLane({ phase, progress, overtime }: { phase: Phase; progress: number | null; overtime: boolean }) {
+  if (progress !== null) return <div className={'lane timed' + (overtime ? ' overtime' : '')} aria-hidden="true">
+    <div className="lane-fill" style={{ width: `${progress * 100}%` }} />
+    <span className="lane-head" style={{ left: `clamp(24px, ${progress * 100}%, calc(100% - 24px))` }}><span className="m-bob">{phaseText[phase].emoji}</span></span>
+  </div>;
+  if (phase === 'coldReady') return <div className="lane idle" aria-hidden="true">{['🧊', '❄️', '🐻‍❄️', '❄️', '🧊'].map((emoji, i) => <span key={i} style={{ left: `${12 + i * 19}%`, animationDelay: `${-i * .07}s` }}>{emoji}</span>)}</div>;
+  return <div className="lane parade" aria-hidden="true">{parades[phase].map(([emoji, seconds, delay, motion, size = 1], i) => <span className="drift" key={i} style={{ animationDuration: `${seconds}s`, animationDelay: `${delay}s` }}><span className={'m-' + motion} style={{ fontSize: `${Math.round(size * 26)}px` }}>{emoji}</span></span>)}</div>;
+}
+
+function Ambient({ phase }: { phase: Phase }) {
+  const [emoji, direction] = ambient[phase];
+  return <div className={'ambient ' + direction} aria-hidden="true">{particles.map(([left, seconds, delay, size], i) => <span key={i} style={{ left: `${left}%`, animationDuration: `${seconds}s`, animationDelay: `${delay}s` }}><i style={{ fontSize: `${Math.round(size * 20)}px` }}>{emoji}</i></span>)}</div>;
+}
 
 function useWakeLock(active: boolean) {
   const [status, setStatus] = useState('Off');
@@ -100,8 +128,8 @@ function SettingsPanel({ settings, onSave, onDraftChange }: { settings: Settings
     </div><p className="hint">Soaping has no time limit. Choose Off for no warning.</p>
     <h3>Cold finish</h3><div className="settings-card"><Toggle checked={draft.coldEnabled} onChange={coldEnabled => patch({ coldEnabled })} label="Finish with cold water" description="Always starts with your own tap." icon={<Snowflake size={20} />} />
       {draft.coldEnabled && <><div className="divider" /><div className="segmented"><button type="button" className={draft.coldMode === 'measure' ? 'selected' : ''} onClick={() => patch({ coldMode: 'measure' })}>Measure</button><button type="button" className={draft.coldMode === 'random' ? 'selected' : ''} onClick={() => patch({ coldMode: 'random' })}>Surprise me</button></div>
-        <p className="hint">{draft.coldMode === 'random' ? 'A random duration within your range. No countdown or warning gives it away.' : 'An open-ended stopwatch. Finish whenever you’re ready.'}</p>
-        {draft.coldMode === 'random' && <div className="range-inputs"><DurationInput label="Minimum" value={draft.coldMin} onChange={coldMin => patch({ coldMin })} /><DurationInput label="Maximum" value={draft.coldMax} onChange={coldMax => patch({ coldMax })} /></div>}
+        <p className="hint">{draft.coldMode === 'random' ? 'A random duration within your range. No countdown or warning gives it away.' : 'An open-ended stopwatch. Finish whenever you’re ready.'}{draft.mode === 'measure' && ' Just measure asks again when the water is cold.'}</p>
+        {(draft.coldMode === 'random' || draft.mode === 'measure') && <div className="range-inputs"><DurationInput label="Minimum" value={draft.coldMin} onChange={coldMin => patch({ coldMin })} /><DurationInput label="Maximum" value={draft.coldMax} onChange={coldMax => patch({ coldMax })} /></div>}
       </>}
     </div>
     <h3>Appearance</h3><div className="segmented"><button type="button" className={draft.theme === 'dark' ? 'selected' : ''} onClick={() => patch({ theme: 'dark' })}><Moon size={17} />Dark</button><button type="button" className={draft.theme === 'light' ? 'selected' : ''} onClick={() => patch({ theme: 'light' })}><Sun size={17} />Light</button></div>
@@ -157,6 +185,7 @@ export default function App() {
   const [storageOk, setStorageOk] = useState(true);
   const [confirmStop, setConfirmStop] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [undo, setUndo] = useState<{ previous: Run; at: number; phase?: Phase; sessionId?: string } | null>(null);
   const wake = useWakeLock(!!run || testWake);
   const { needRefresh: [needRefresh], updateServiceWorker } = useRegisterSW();
   const warned = useRef<string | null>(null);
@@ -171,11 +200,15 @@ export default function App() {
     } else setPanel(next);
   };
 
+  const scene = run ? (run.phase === 'coldReady' ? 'cold' : run.phase) : null;
   useEffect(() => { setStorageOk(saveData(data)); }, [data]);
   useEffect(() => {
-    document.documentElement.dataset.theme = settings.theme;
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', settings.theme === 'dark' ? '#10191e' : '#f3f7f5');
-  }, [settings.theme]);
+    const root = document.documentElement;
+    root.dataset.theme = settings.theme;
+    if (scene) root.dataset.phase = scene; else delete root.dataset.phase;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', getComputedStyle(root).getPropertyValue('--bg').trim());
+  }, [settings.theme, scene]);
+  useEffect(() => { if (!undo) return; const id = setTimeout(() => setUndo(null), UNDO_MS); return () => clearTimeout(id); }, [undo]);
   useEffect(() => { if (!run) return; const id = setInterval(() => setNow(Date.now()), 100); return () => clearInterval(id); }, [!!run]);
   useEffect(() => { if (!toast) return; const id = setTimeout(() => { setToast(''); setDeleted(null); }, 6000); return () => clearTimeout(id); }, [toast]);
   useEffect(() => { if (panel !== 'tests') setTestWake(false); }, [panel]);
@@ -195,8 +228,19 @@ export default function App() {
   const goNext = (when: 'onTime' | 'now' = 'now') => {
     if (!run) return;
     const at = Date.now(), stopped = run.phase === 'rinse' ? confirmWaterStop(run, at, when) : run, next = advance(stopped, at);
-    if (next) { setRun(next); setNow(at); } else saveResult(finish(stopped, at, true));
+    if (next) { setRun(next); setNow(at); setUndo({ previous: run, at, phase: next.phase }); }
+    else { const session = finish(stopped, at, true); saveResult(session); setUndo({ previous: run, at, sessionId: session.id }); }
   };
+  // Only the latest manual tap can be undone, and only while its phase or result is still on screen.
+  const canUndo = !!undo && (undo.sessionId ? !run && result?.id === undo.sessionId : !!run && run.startedAt === undo.previous.startedAt && run.phase === undo.phase);
+  const undoLast = () => {
+    if (!undo || !canUndo) return;
+    const at = Date.now(), sessionId = undo.sessionId;
+    if (sessionId) { setData(d => ({ ...d, sessions: d.sessions.filter(s => s.id !== sessionId) })); setResult(null); setRun(undoAdvance(undo.previous, undo.at, at)); }
+    else if (run) setRun(undoAdvance(undo.previous, undo.at, at, run));
+    setNow(at); setUndo(null);
+  };
+  const undoButton = (label: string) => canUndo && undo && <button className="secondary undo-button" style={{ '--undo-ms': `${UNDO_MS}ms` } as CSSProperties} onClick={undoLast} aria-label={`Undo, back to ${undo.sessionId ? 'your shower' : phaseText[undo.previous.phase].name}`}><Undo2 size={16} />{label}</button>;
   useEffect(() => {
     if (!run || run.pausedAt !== null || document.visibilityState !== 'visible') return;
     const limit = phaseLimit(run);
@@ -224,7 +268,7 @@ export default function App() {
   const patchSettings = (patch: Partial<Settings>) => setData(d => ({ ...d, settings: normalizeSettings({ ...d.settings, ...patch }) }));
   const start = () => {
     if (settings.sound) void unlockAudio().then(ok => { if (!ok) setToast('Audio could not start. Try the sound test in the menu.'); });
-    const at = Date.now(); warned.current = null; endSignalled.current = null; setResult(null); setNow(at); setRun(startRun(settings, at));
+    const at = Date.now(); warned.current = null; endSignalled.current = null; setResult(null); setUndo(null); setNow(at); setRun(startRun(settings, at));
   };
   const remove = (id: string) => {
     const session = data.sessions.find(s => s.id === id);
@@ -237,10 +281,12 @@ export default function App() {
   const rinseOvertime = run?.phase === 'rinse' && limit !== null && time >= limit;
   const phaseInfo = run ? phaseText[run.phase] : null;
   const progress = run && limit && !hidden ? Math.min(1, time / limit) : 0;
+  const wakeProblem = wake.status !== 'On' && wake.status !== 'Off';
+  const coldSummary = !settings.coldEnabled ? 'A little extra reset. Entirely optional.' : settings.mode === 'measure' ? 'Count or surprise · pick when cold' : settings.coldMode === 'random' ? `Surprise · ${formatTime(settings.coldMin)}–${formatTime(settings.coldMax)}` : 'Measure your moment of cold';
   const latest = data.sessions.find(s => s.complete);
   const notification = toast && <div className="toast" role="status"><span>{toast}</span>{deleted && <button onClick={() => { setData(d => ({ ...d, sessions: [...d.sessions, deleted].sort((a, b) => b.startedAt - a.startedAt) })); setDeleted(null); setToast('Restored.'); }}>Undo</button>}<button className="icon-button" aria-label="Dismiss notification" onClick={() => setToast('')}><X size={16} /></button></div>;
 
-  return <div className={'app-shell' + (!run && !result ? ' home-screen' : '')}>
+  return <div className={'app-shell' + (!run && !result ? ' home-screen' : '') + (run ? ' shower-screen' : '')}>
     <header className="app-header"><a className="brand" href={import.meta.env.BASE_URL} onClick={e => { e.preventDefault(); if (!run) { setResult(null); setPanel(null); } }}><span className="brand-mark"><Droplets size={22} /></span><span>shower<span className="brand-light">timer</span><span className="brand-dot">.</span></span></a><button className="icon-button" aria-label="Open menu" onClick={() => setPanel('menu')}><Menu size={23} /></button></header>
     <main>
       {!run && !result && <>
@@ -250,28 +296,31 @@ export default function App() {
         </div>
         <div className="mode-switch segmented" aria-label="Shower mode"><button className={settings.mode === 'guided' ? 'selected' : ''} onClick={() => patchSettings({ mode: 'guided' })}><Droplets size={18} />Guide me</button><button className={settings.mode === 'measure' ? 'selected' : ''} onClick={() => patchSettings({ mode: 'measure' })}><Clock3 size={18} />Just measure</button></div>
         <button className="routine-card" onClick={() => setPanel('settings')} aria-label="Change shower timings"><span><span className="routine-emoji">🚿</span><strong>{settings.mode === 'guided' ? formatTime(settings.wet) : 'Get wet'}</strong><small>{settings.mode === 'guided' ? 'get wet' : 'tap to move on'}</small></span><ChevronRight size={14} /><span><span className="routine-emoji">🫧</span><strong>No rush</strong><small>soap up</small></span><ChevronRight size={14} /><span><span className="routine-emoji">💧</span><strong>{settings.mode === 'guided' ? formatTime(settings.rinse) : 'Rinse off'}</strong><small>{settings.mode === 'guided' ? 'rinse off' : 'tap to finish'}</small></span><Settings2 className="routine-edit" size={15} /></button>
-        <div className={'cold-card ' + (settings.coldEnabled ? 'enabled' : '')}><Toggle checked={settings.coldEnabled} onChange={coldEnabled => patchSettings({ coldEnabled })} label="A cold finish?" description={settings.coldEnabled ? settings.coldMode === 'random' ? `Surprise · ${formatTime(settings.coldMin)}–${formatTime(settings.coldMax)}` : 'Measure your moment of cold' : 'A little extra reset. Entirely optional.'} icon={<Snowflake size={22} />} />{settings.coldEnabled && <button className="cold-config text-button" onClick={() => setPanel('settings')}>Change cold finish<ChevronRight size={14} /></button>}</div>
+        <div className={'cold-card ' + (settings.coldEnabled ? 'enabled' : '')}><Toggle checked={settings.coldEnabled} onChange={coldEnabled => patchSettings({ coldEnabled })} label="A cold finish?" description={coldSummary} icon={<Snowflake size={22} />} />{settings.coldEnabled && <button className="icon-button cold-config" onClick={() => setPanel('settings')} aria-label="Change cold finish"><Settings2 size={19} /></button>}</div>
         <button className="primary start-button" onClick={start}><Play size={19} fill="currentColor" />Start my shower<ArrowRight size={19} /></button>
         {latest && <button className="last-shower" onClick={() => setPanel('history')}><History size={15} />Last shower <strong>{formatTime(total(latest))}</strong><ChevronRight size={15} /></button>}
       </>}
-      {run && phaseInfo && <section className={'active-view ' + (run.phase.startsWith('cold') ? 'is-cold ' : '') + (run.wetNeedsConfirmation || rinseOvertime ? 'awaiting-water-stop' : '')}>
-        <div className="phase-stepper" aria-label="Current phase">{(['wet', 'soap', 'rinse', ...(run.settings.coldEnabled ? ['cold'] : [])] as Phase[]).map((p, i) => <span className={run.phase === p || (p === 'cold' && ready) ? 'current' : ''} key={p}><span>{i + 1}</span>{p === 'wet' ? 'Wet' : p === 'soap' ? 'Soap' : p === 'rinse' ? 'Rinse' : 'Cold'}</span>)}</div>
-        <div className="active-heading"><h1>{phaseInfo.title}</h1><p>{phaseInfo.caption}</p></div>
-        <div className={'timer-ring ' + (hidden || ready ? 'mystery' : '')}>
+      {run && phaseInfo && <>
+        <div key={'splash-' + run.phase} className="phase-splash" aria-hidden="true"><span>{phaseInfo.emoji}</span><strong>{phaseInfo.name}</strong></div>
+        <section key={run.phase} className={'active-view' + (run.pausedAt !== null ? ' paused' : '')}>
+        <div className="phase-stepper" aria-label="Shower phases">{(['wet', 'soap', 'rinse', ...(run.settings.coldEnabled ? ['cold'] : [])] as Array<keyof typeof steps>).map((p, i, all) => {
+          const current = all.indexOf(run.phase === 'coldReady' ? 'cold' : run.phase);
+          return <span className={i === current ? 'current' : i < current ? 'done' : ''} aria-current={i === current ? 'step' : undefined} key={p}><span aria-hidden="true">{i < current ? '✓' : steps[p][0]}</span>{steps[p][1]}</span>;
+        })}</div>
+        <h1 className="active-title">{phaseInfo.title}</h1>
+        <div className="ring-zone"><Ambient phase={run.phase} /><div className={'timer-ring ' + (hidden || ready ? 'mystery' : '')}>
           <svg className="ring-svg" viewBox="0 0 300 300" aria-hidden="true"><circle className="ring-track" cx="150" cy="150" r="138" /><circle className="ring-progress" cx="150" cy="150" r="138" strokeDasharray="867.08" strokeDashoffset={867.08 * (1 - progress)} /></svg>
-          <div className="timer-content"><span className="phase-emoji">{phaseInfo.emoji}</span>{hidden || ready ? <><strong className="mystery-label">{ready ? 'Your moment.' : 'Stay present.'}</strong><small>{ready ? 'Start when the water is cold' : run.pausedAt !== null ? 'Paused' : 'Listen for the three beeps'}</small></> : <><strong className="timer-number">{rinseOvertime ? `+${formatTime(time - limit!)}` : formatTime(limit !== null ? Math.ceil(Math.max(0, limit - time)) : time)}</strong><small>{run.pausedAt !== null ? 'Paused' : rinseOvertime ? 'past your target' : limit !== null ? 'remaining' : 'take your time'}</small></>}</div>
-        </div>
-        {run.phase === 'soap' && <p className="phase-note">No timer to beat. Tap below when you’re ready to rinse.</p>}
-        {run.phase === 'soap' && run.wetNeedsConfirmation && <div className="water-confirmation"><strong>When did you turn the water off?</strong><p>Soap time starts at the beep. If you kept the water running, we’ll move that time back to Get wet.</p><div><button className="secondary" onClick={() => setRun(confirmWaterStop(run, Date.now(), 'onTime'))}>Stopped on time</button><button className="secondary" onClick={() => { const at = Date.now(); setRun(confirmWaterStop(run, at, 'now')); setNow(at); setToast('Water time corrected. Soap timer starts now.'); }}>Water off just now</button></div></div>}
-        {hidden && !run.settings.sound && <p className="phase-note">Sound is off. The screen will change when you’re done.</p>}
-        {rinseOvertime && <p className="phase-note">Still measuring. Did you stop at the beep, or just now?</p>}
-        <button className="primary" onClick={() => goNext()}>{rinseOvertime ? <><Check size={19} />Stopped just now</> : ready ? <><Snowflake size={19} />Start cold water</> : run.phase === 'wet' ? <>Time to soap up<ArrowRight size={19} /></> : run.phase === 'soap' ? <>Start rinsing<ArrowRight size={19} /></> : run.phase === 'rinse' && run.settings.coldEnabled ? <>Ready for cold<ArrowRight size={19} /></> : <><Check size={19} />{run.phase === 'cold' ? 'Finish now' : 'Finish shower'}</>}</button>
-        {rinseOvertime && <button className="secondary full" onClick={() => goNext('onTime')}>Stopped on time</button>}
-        <div className="active-actions">{!ready && <button className="secondary" onClick={() => { setRun(togglePause(run, Date.now())); setNow(Date.now()); }}>{run.pausedAt !== null ? <Play size={16} /> : <Pause size={16} />}{run.pausedAt !== null ? 'Resume' : 'Pause'}</button>}{ready && <button className="secondary" onClick={() => saveResult(finish(run, Date.now(), true))}>Skip cold finish</button>}<button className="text-button muted" onClick={() => setConfirmStop(true)}>End shower</button></div>
-        <button className="wake-status text-button" onClick={wake.retry}><span className={'status-dot ' + (wake.status === 'On' ? '' : 'warning')} />{wake.status === 'On' ? 'Keeping your screen awake' : `Screen awake: ${wake.status.toLowerCase()} · retry`}</button>
-        {wake.status !== 'On' && <p className="hint">Keep the app visible. Screen lock and switching apps can interrupt sound.</p>}
-      </section>}
-      {result && !run && <section className="result-view"><div className="result-emoji">{result.complete ? '✨' : '🫧'}</div><div className="eyebrow">{result.complete ? 'FRESH CHAPTER. SAME YOU.' : 'SAVED TO YOUR HISTORY'}</div><h1>{result.complete ? 'All refreshed.' : 'A moment, saved.'}</h1><p>{result.complete ? 'A little reset goes a long way.' : 'This shower is marked as stopped early.'}</p><div className="result-total"><strong>{formatTime(total(result))}</strong><span>your shower</span></div><div className="settings-card"><PhaseTimes session={result} /></div><button className="primary" onClick={() => setResult(null)}>Lovely. All done.<Check size={19} /></button><button className="text-button center" onClick={() => setPanel('history')}><History size={17} />View history</button></section>}
+          <div className="timer-content"><span className="phase-emoji">{phaseInfo.emoji}</span>{hidden || ready ? <><strong className="mystery-label">{ready ? 'Your moment.' : 'Stay present.'}</strong><small>{run.pausedAt !== null ? 'Paused' : ready ? 'Start when it’s cold' : run.settings.sound ? 'Wait for three beeps' : 'Sound is off'}</small></> : <><strong className="timer-number">{rinseOvertime ? `+${formatTime(time - limit!)}` : formatTime(limit !== null ? Math.ceil(Math.max(0, limit - time)) : time)}</strong><small>{run.pausedAt !== null ? 'Paused' : rinseOvertime ? 'past your target' : limit !== null ? 'remaining' : 'elapsed'}</small></>}</div>
+        </div></div>
+        {run.phase === 'soap' && run.wetNeedsConfirmation && <div className="water-confirmation"><strong>When did you turn the water off?</strong><div><button className="secondary" onClick={() => setRun(confirmWaterStop(run, Date.now(), 'onTime'))}>Stopped on time</button><button className="secondary" onClick={() => { const at = Date.now(); setRun(confirmWaterStop(run, at, 'now')); setNow(at); setToast('Water time corrected. Soap timer starts now.'); }}>Water off just now</button></div></div>}
+        {ready && run.settings.mode === 'measure' && run.coldSurprise !== null && <div className="segmented cold-choice" role="group" aria-label="Cold finish"><button aria-pressed={run.coldTarget === null} className={run.coldTarget === null ? 'selected' : ''} onClick={() => setRun(chooseCold(run, 'measure'))}><Clock3 size={18} />Just count</button><button aria-pressed={run.coldTarget !== null} className={run.coldTarget !== null ? 'selected' : ''} onClick={() => setRun(chooseCold(run, 'random'))}><Shuffle size={18} />Surprise me</button></div>}
+        <PhaseLane phase={run.phase} progress={limit !== null && !hidden ? progress : null} overtime={rinseOvertime} />
+        {rinseOvertime ? <div className="stop-choice"><button className="primary secondary-tone" onClick={() => goNext('onTime')}>Stopped on time</button><button className="primary" onClick={() => goNext('now')}><Check size={19} />Stopped just now</button></div>
+          : <button className="primary" onClick={() => goNext()}>{ready ? <><Snowflake size={19} />Start cold water</> : run.phase === 'wet' ? <>Time to soap up<ArrowRight size={19} /></> : run.phase === 'soap' ? <>Start rinsing<ArrowRight size={19} /></> : run.phase === 'rinse' && run.settings.coldEnabled ? <>Ready for cold<ArrowRight size={19} /></> : <><Check size={19} />{run.phase === 'cold' ? 'Finish now' : 'Finish shower'}</>}</button>}
+        <div className="active-actions">{undoButton('Undo')}{!ready && <button className="secondary" onClick={() => { setRun(togglePause(run, Date.now())); setNow(Date.now()); }}>{run.pausedAt !== null ? <Play size={16} /> : <Pause size={16} />}{run.pausedAt !== null ? 'Resume' : 'Pause'}</button>}{ready && <button className="secondary" onClick={() => saveResult(finish(run, Date.now(), true))}>Skip cold</button>}<button className="text-button muted" onClick={() => setConfirmStop(true)}>End shower</button></div>
+        {wakeProblem && <button className="wake-status text-button" onClick={wake.retry}><span className="status-dot warning" />Screen may sleep · retry</button>}
+      </section></>}
+      {result && !run && <section className="result-view"><div className="result-emoji">{result.complete ? '✨' : '🫧'}</div><div className="eyebrow">{result.complete ? 'FRESH CHAPTER. SAME YOU.' : 'STOPPED EARLY · SAVED'}</div><h1>{result.complete ? 'All refreshed.' : 'A moment, saved.'}</h1><div className="result-total"><strong>{formatTime(total(result))}</strong><span>your shower</span></div><div className="settings-card"><PhaseTimes session={result} /></div><button className="primary" onClick={() => { setResult(null); setUndo(null); }}>Lovely. All done.<Check size={19} /></button><div className="result-actions">{undoButton('Not done yet')}<button className="text-button" onClick={() => setPanel('history')}><History size={17} />View history</button></div></section>}
     </main>
     {!storageOk && <div className="persistent-notice" role="alert">Storage is unavailable. Settings and history won’t survive closing this page.</div>}
     {needRefresh && !run && <div className="update-banner">A fresh version is ready.<button className="text-button" onClick={() => void updateServiceWorker(true)}>Update</button></div>}

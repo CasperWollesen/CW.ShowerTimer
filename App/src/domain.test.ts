@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { advance, confirmWaterStop, defaults, elapsed, finish, normalizeSettings, phaseLimit, randomDuration, startRun, togglePause, total, wetDeadline } from './domain';
+import { advance, chooseCold, confirmWaterStop, defaults, elapsed, finish, normalizeSettings, phaseLimit, randomDuration, startRun, togglePause, total, undoAdvance, wetDeadline } from './domain';
 
 describe('shower timing', () => {
   it('uses timestamps so delayed ticks do not slow the clock', () => {
@@ -49,7 +49,59 @@ describe('cold surprise', () => {
     expect(phaseLimit(run)).toBe(12); expect(finish(run, 16000, true).durations.cold).toBe(12);
   });
   it('does not choose a target for measured cold water', () => {
-    expect(startRun({ ...defaults, coldEnabled: true }, 0).coldTarget).toBeNull();
+    const run = startRun({ ...defaults, coldEnabled: true }, 0);
+    expect(run.coldTarget).toBeNull(); expect(run.coldSurprise).toBeNull();
+  });
+  it('lets Just measure pick a stopwatch or the pre-drawn surprise when the water is cold', () => {
+    let run = startRun({ ...defaults, mode: 'measure', coldEnabled: true, coldMin: 20, coldMax: 20 }, 0);
+    expect(run.coldSurprise).toBe(20); expect(run.coldTarget).toBeNull();
+    expect(chooseCold(run, 'random')).toBe(run);
+    run = advance(advance(advance(run, 1000)!, 2000)!, 3000)!; expect(run.phase).toBe('coldReady');
+    run = chooseCold(run, 'random'); expect(run.coldTarget).toBe(20);
+    run = chooseCold(run, 'measure'); expect(run.coldTarget).toBeNull();
+    run = advance(chooseCold(run, 'random'), 10000)!;
+    expect(phaseLimit(run)).toBe(20); expect(chooseCold(run, 'measure')).toBe(run);
+    expect(finish(run, 30000, true).coldTarget).toBe(20);
+  });
+  it('keeps the guided cold choice fixed before the shower', () => {
+    let run = startRun({ ...defaults, coldEnabled: true }, 0);
+    run = advance(advance(advance(run, 1000)!, 2000)!, 3000)!;
+    expect(chooseCold(run, 'random')).toBe(run);
+  });
+});
+
+describe('undo a phase change', () => {
+  it('reopens the earlier phase and keeps the time after the accidental tap', () => {
+    const wet = startRun({ ...defaults, mode: 'measure' }, 0);
+    const soap = advance(wet, 30000)!;
+    const back = undoAdvance(wet, 30000, 35000, soap);
+    expect(back.phase).toBe('wet'); expect(back.durations).toEqual(wet.durations);
+    expect(elapsed(back, 35000)).toBe(35); expect(back.pausedAt).toBeNull();
+  });
+  it('excludes and keeps a pause made after the accidental tap', () => {
+    const soap = advance(startRun({ ...defaults, mode: 'measure' }, 0), 10000)!;
+    let rinse = advance(soap, 70000)!;
+    rinse = togglePause(rinse, 75000);
+    const back = undoAdvance(soap, 70000, 95000, rinse);
+    expect(back.phase).toBe('soap'); expect(back.pausedAt).not.toBeNull();
+    expect(elapsed(back, 120000)).toBe(65);
+    expect(elapsed(togglePause(back, 120000), 130000)).toBe(75);
+  });
+  it('reopens a finished shower, counting the time since the tap', () => {
+    const rinse = advance(advance(startRun({ ...defaults, mode: 'measure' }, 0), 10000)!, 20000)!;
+    const back = undoAdvance(rinse, 50000, 54000);
+    expect(back.phase).toBe('rinse'); expect(elapsed(back, 54000)).toBe(34);
+    expect(finish(back, 60000, true).durations).toEqual({ wet: 10, soap: 10, rinse: 40, cold: 0 });
+  });
+  it('restores rinse overtime after an on-time finish was undone', () => {
+    const rinse = advance(wetDeadline(startRun(defaults, 0)), 180000)!;
+    const back = undoAdvance(rinse, 330000, 332000);
+    expect(back.phase).toBe('rinse'); expect(elapsed(back, 332000)).toBe(152);
+  });
+  it('keeps a paused shower paused when a finish is undone', () => {
+    const rinse = togglePause(advance(startRun({ ...defaults, mode: 'measure' }, 0), 10000)!, 25000);
+    const back = undoAdvance(rinse, 40000, 50000);
+    expect(elapsed(back, 90000)).toBe(15); expect(back.pausedAt).not.toBeNull();
   });
 });
 describe('stored settings', () => {
