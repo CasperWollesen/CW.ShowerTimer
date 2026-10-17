@@ -11,23 +11,29 @@ export async function unlockAudio(): Promise<boolean> {
     return context.state === 'running';
   } catch { return false; }
 }
-export function beep(kind: 'warning' | 'end', signal: 'gentle' | 'strong' = 'strong'): boolean {
+/** A tap is a short confirmation at alert loudness, so a silent phone or a headset is noticed at once. */
+export function beep(kind: 'warning' | 'end' | 'tap', signal: 'gentle' | 'strong' = 'strong'): boolean {
   if (!context || context.state !== 'running') return false;
-  // Trying another sample replaces the old one instead of stacking tones.
-  for (const tone of activeTones) { try { tone.stop(); } catch { /* Already ended. */ } }
-  activeTones = [];
-  const count = kind === 'warning' ? 1 : 3;
+  const tap = kind === 'tap';
+  // Trying another sample replaces the old one instead of stacking tones. A tap never cuts off an alert.
+  if (!tap) {
+    for (const tone of activeTones) { try { tone.stop(); } catch { /* Already ended. */ } }
+    activeTones = [];
+  }
+  const count = kind === 'end' ? 3 : 1;
   const strong = signal === 'strong';
-  const duration = strong ? 0.6 : 0.25;
+  const duration = tap ? (strong ? 0.14 : 0.1) : strong ? 0.6 : 0.25;
   for (let i = 0; i < count; i++) {
     const start = context.currentTime + i * (duration + 0.18);
     const oscillator = context.createOscillator(), gain = context.createGain();
-    activeTones.push(oscillator);
-    oscillator.onended = () => { activeTones = activeTones.filter(tone => tone !== oscillator); };
+    if (!tap) {
+      activeTones.push(oscillator);
+      oscillator.onended = () => { activeTones = activeTones.filter(tone => tone !== oscillator); };
+    }
     oscillator.type = strong ? 'triangle' : 'sine';
-    oscillator.frequency.value = strong ? (kind === 'warning' ? 440 : 520) : (kind === 'warning' ? 740 : 920);
+    oscillator.frequency.value = tap ? (strong ? 660 : 990) : strong ? (kind === 'warning' ? 440 : 520) : (kind === 'warning' ? 740 : 920);
     gain.gain.setValueAtTime(0, start); gain.gain.linearRampToValueAtTime(strong ? 0.65 : 0.24, start + 0.02);
-    gain.gain.setValueAtTime(strong ? 0.65 : 0.24, start + duration - 0.09);
+    gain.gain.setValueAtTime(strong ? 0.65 : 0.24, start + Math.max(0.03, duration - 0.09));
     gain.gain.exponentialRampToValueAtTime(0.001, start + duration);
     oscillator.connect(gain); gain.connect(context.destination); oscillator.start(start); oscillator.stop(start + duration + 0.02);
   }

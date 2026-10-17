@@ -17,13 +17,14 @@ describe('vibration feedback', () => {
 });
 describe('audible feedback', () => {
   it('makes strong signals louder and longer, with three completion tones', async () => {
+    let cancelled = 0;
     const gains: Array<{ ramp: ReturnType<typeof vi.fn> }> = [];
     const stops: number[] = [];
     const tones: Array<{ frequency: { value: number } }> = [];
     class TestContext {
       state = 'running'; currentTime = 0; destination = {};
       async resume() {}
-      createOscillator() { const tone = { type: 'sine', frequency: { value: 0 }, connect() {}, start() {}, stop(at?: number) { if (at !== undefined) stops.push(at); } }; tones.push(tone); return tone; }
+      createOscillator() { const tone = { type: 'sine', frequency: { value: 0 }, connect() {}, start() {}, stop(at?: number) { if (at !== undefined) stops.push(at); else cancelled++; } }; tones.push(tone); return tone; }
       createGain() {
         const ramp = vi.fn(); gains.push({ ramp });
         return { connect() {}, gain: { value: 0, setValueAtTime() {}, linearRampToValueAtTime: ramp, exponentialRampToValueAtTime() {} } };
@@ -41,5 +42,9 @@ describe('audible feedback', () => {
     expect(gains[0]!.ramp).toHaveBeenCalledWith(0.65, 0.02);
     expect(stops[1]! - stops[0]!).toBeCloseTo(0.78);
     expect(tones.map(tone => tone.frequency.value)).toEqual([520, 520, 520]);
+    gains.length = 0; stops.length = 0; tones.length = 0; cancelled = 0;
+    expect(beep('tap', 'strong')).toBe(true);
+    expect(cancelled).toBe(0); expect(stops).toHaveLength(1); expect(stops[0]!).toBeLessThan(0.2);
+    expect(gains[0]!.ramp).toHaveBeenCalledWith(0.65, 0.02);
   });
 });

@@ -55,6 +55,27 @@ Phone-first, English, minimal home screen. Preferences, history and diagnostics 
   from rinse/coldReady/result worked. Also checked 375×728, 320×568 (soap question scrolls slightly),
   light theme and desktop. No console errors. Real iPhone rendering and animation smoothness remain device QA.
 
+## Warm to cold, version 0.4.1
+- Owner feedback: keep the dark theme during cold. Warm-water phases now use warm hues that also
+  differ in brightness: golden wet, pink soap, orange-red rinse. Cold is dark navy with icy cyan,
+  a top glow, frosted corners, a rime edge around the screen and a glowing ring.
+- Light theme keeps pale variants (pale gold, pink, coral, frost); only light theme turns cold light.
+- Verification: typecheck, 37 tests and build pass. Browser-checked all dark phases plus light
+  wet/rinse at 375×629, with no overflow.
+
+## Audible checks and counting cold, version 0.4.2
+- Owner feedback: a Bluetooth headset silently took the beeps. A header speaker on every screen plays
+  a warning-tone test beep regardless of the beep setting (VolumeX icon and a toast when beeps are off).
+- With beeps on, Start, phase taps, stop choices, water-stop answers, pause/resume, skip cold and undo
+  give a 0.1–0.14s confirmation tone at alert loudness. Each tap also re-resumes the AudioContext.
+  Taps never cut off alert tones; previews and alerts still replace each other.
+- Cold surprise now counts up (owner decision, AGENTS.md updated). Target, countdown and progress stay
+  hidden. At the target: three beeps, full ring, pulsing lane, "Surprise m:ss ✓", button "I’m done".
+  The phase no longer finishes automatically; history stores the actual cold time and the target.
+- Verification: typecheck, 38 tests and build pass. Browser-instrumented oscillators confirmed the test beep,
+  the start/phase/pause taps, the silent start with beeps off and the 3 end tones at a 6s surprise.
+  Counting continued past the target and saved 43s against a 6s target. No overflow at 375×629.
+
 ## Behavior
 - Guided: timed wet → unlimited soap → timed rinse. Wet advances at its target; rinse waits for confirmation.
 - Measure: stopwatch per phase with manual transitions.
@@ -69,7 +90,8 @@ Phone-first, English, minimal home screen. Preferences, history and diagnostics 
 - Expandable Share section under Settings: locally generated QR, public URL, copy and native share.
 - Optional cold finish, measured or random. Target is selected once before the shower.
 - Cold preparation is untimed and excluded from totals. Explicit tap starts cold water.
-- Random cold exposes no timing or progress and has no warning. Target appears afterwards.
+- Random cold shows elapsed time only: no countdown, target or progress and no warning. Three beeps mark
+  the target, then it keeps counting until Finish; the target appears afterwards.
 - Pause, stop early, finish early, skip cold. Stops are marked and excluded from aggregate totals.
 - End shower also offers Discard shower: return home without adding history or changing preferences.
 - Dark default, light option. Local history, sums, averages, cold totals, weekly chart.

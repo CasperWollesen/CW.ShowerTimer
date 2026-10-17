@@ -48,6 +48,13 @@ describe('cold surprise', () => {
     run = advance(run, 3000)!; run = advance(run, 4000)!;
     expect(phaseLimit(run)).toBe(12); expect(finish(run, 16000, true).durations.cold).toBe(12);
   });
+  it('keeps counting a cold surprise past its hidden target', () => {
+    let run = startRun({ ...defaults, coldEnabled: true, coldMode: 'random', coldMin: 30, coldMax: 30 }, 0);
+    run = advance(advance(advance(advance(run, 1000)!, 2000)!, 3000)!, 4000)!;
+    expect(phaseLimit(run)).toBe(30); expect(elapsed(run, 50000)).toBe(46);
+    const session = finish(run, 50000, true);
+    expect(session.durations.cold).toBe(46); expect(session.coldTarget).toBe(30);
+  });
   it('does not choose a target for measured cold water', () => {
     const run = startRun({ ...defaults, coldEnabled: true }, 0);
     expect(run.coldTarget).toBeNull(); expect(run.coldSurprise).toBeNull();

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
-import { ArrowLeft, ArrowRight, Check, ChevronRight, Clock3, Droplets, FlaskConical, History, Menu, Moon, Pause, Play, Settings2, Shuffle, Snowflake, Sun, Trash2, Undo2, Volume2, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, ChevronRight, Clock3, Droplets, FlaskConical, History, Menu, Moon, Pause, Play, Settings2, Shuffle, Snowflake, Sun, Trash2, Undo2, Volume2, VolumeX, X } from 'lucide-react';
 import { useRegisterSW } from 'virtual:pwa-register/react';
 import { advance, chooseCold, confirmWaterStop, elapsed, finish, formatTime, normalizeSettings, phaseLimit, startRun, togglePause, total, undoAdvance, wetDeadline } from './domain';
 import type { Phase, Run, Session, Settings } from './domain';
@@ -32,14 +32,14 @@ const parades: Record<Exclude<Phase, 'coldReady'>, Drifter[]> = {
 const ambient: Record<Phase, [emoji: string, direction: 'fall' | 'rise']> = { wet: ['💧', 'fall'], soap: ['🫧', 'rise'], rinse: ['💧', 'fall'], coldReady: ['❄️', 'fall'], cold: ['❄️', 'fall'] };
 const particles = [[4, 7.3, 0, .9], [17, 9.1, -4.2, .7], [30, 6.6, -2.5, 1], [50, 8.4, -6.1, .75], [66, 7.7, -1.4, .95], [80, 9.8, -5.3, .7], [92, 6.9, -3.6, .85]] as const;
 
-/** Timed phases fill like a progress bar; everything else, including a cold surprise, only loops. */
+/** Timed phases fill like a progress bar; everything else, including a cold surprise, only loops (and pulses once a surprise is over). */
 function PhaseLane({ phase, progress, overtime }: { phase: Phase; progress: number | null; overtime: boolean }) {
   if (progress !== null) return <div className={'lane timed' + (overtime ? ' overtime' : '')} aria-hidden="true">
     <div className="lane-fill" style={{ width: `${progress * 100}%` }} />
     <span className="lane-head" style={{ left: `clamp(24px, ${progress * 100}%, calc(100% - 24px))` }}><span className="m-bob">{phaseText[phase].emoji}</span></span>
   </div>;
   if (phase === 'coldReady') return <div className="lane idle" aria-hidden="true">{['🧊', '❄️', '🐻‍❄️', '❄️', '🧊'].map((emoji, i) => <span key={i} style={{ left: `${12 + i * 19}%`, animationDelay: `${-i * .07}s` }}>{emoji}</span>)}</div>;
-  return <div className="lane parade" aria-hidden="true">{parades[phase].map(([emoji, seconds, delay, motion, size = 1], i) => <span className="drift" key={i} style={{ animationDuration: `${seconds}s`, animationDelay: `${delay}s` }}><span className={'m-' + motion} style={{ fontSize: `${Math.round(size * 26)}px` }}>{emoji}</span></span>)}</div>;
+  return <div className={'lane parade' + (overtime ? ' overtime' : '')} aria-hidden="true">{parades[phase].map(([emoji, seconds, delay, motion, size = 1], i) => <span className="drift" key={i} style={{ animationDuration: `${seconds}s`, animationDelay: `${delay}s` }}><span className={'m-' + motion} style={{ fontSize: `${Math.round(size * 26)}px` }}>{emoji}</span></span>)}</div>;
 }
 
 function Ambient({ phase }: { phase: Phase }) {
@@ -185,6 +185,7 @@ export default function App() {
   const [storageOk, setStorageOk] = useState(true);
   const [confirmStop, setConfirmStop] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [ringing, setRinging] = useState(false);
   const [undo, setUndo] = useState<{ previous: Run; at: number; phase?: Phase; sessionId?: string } | null>(null);
   const wake = useWakeLock(!!run || testWake);
   const { needRefresh: [needRefresh], updateServiceWorker } = useRegisterSW();
@@ -225,8 +226,20 @@ export default function App() {
     setData(d => ({ ...d, sessions: [session, ...d.sessions] }));
     setResult(session); setRun(null); setConfirmStop(false);
   }, []);
+  // Every shower tap beeps briefly when beeps are on, so a silent phone or a connected headset is noticed at once.
+  const tap = (s: Settings) => {
+    if (s.sound) void unlockAudio().then(ok => { if (!ok || !beep('tap', s.signal)) setToast('Sound is unavailable. Tap the speaker to test it.'); });
+  };
+  const testBeep = async () => {
+    const s = run?.settings ?? settings;
+    if (await unlockAudio() && beep('warning', s.signal)) {
+      setRinging(true); setTimeout(() => setRinging(false), 900);
+      if (!s.sound) setToast('Test beep played. Shower beeps are off in Settings.');
+    } else setToast('Audio could not start. Check the volume, silent mode and whether a headset is connected.');
+  };
   const goNext = (when: 'onTime' | 'now' = 'now') => {
     if (!run) return;
+    tap(run.settings);
     const at = Date.now(), stopped = run.phase === 'rinse' ? confirmWaterStop(run, at, when) : run, next = advance(stopped, at);
     if (next) { setRun(next); setNow(at); setUndo({ previous: run, at, phase: next.phase }); }
     else { const session = finish(stopped, at, true); saveResult(session); setUndo({ previous: run, at, sessionId: session.id }); }
@@ -235,6 +248,7 @@ export default function App() {
   const canUndo = !!undo && (undo.sessionId ? !run && result?.id === undo.sessionId : !!run && run.startedAt === undo.previous.startedAt && run.phase === undo.phase);
   const undoLast = () => {
     if (!undo || !canUndo) return;
+    tap(undo.previous.settings);
     const at = Date.now(), sessionId = undo.sessionId;
     if (sessionId) { setData(d => ({ ...d, sessions: d.sessions.filter(s => s.id !== sessionId) })); setResult(null); setRun(undoAdvance(undo.previous, undo.at, at)); }
     else if (run) setRun(undoAdvance(undo.previous, undo.at, at, run));
@@ -255,8 +269,7 @@ export default function App() {
         if (run.settings.vibration) vibrate('end');
       }
       if (run.phase === 'wet') setRun(wetDeadline(run));
-      // Rinse keeps measuring overtime until the user confirms when the water stopped.
-      else if (run.phase === 'cold') saveResult(finish(run, run.phaseStartedAt + limit * 1000, true));
+      // Rinse and a cold surprise keep measuring past their targets until the next tap.
     } else if (warning > 0 && spent >= limit - warning) {
       if (warned.current !== id) {
         warned.current = id;
@@ -264,10 +277,10 @@ export default function App() {
         if (run.settings.vibration) vibrate('warning');
       }
     }
-  }, [run, now, saveResult]);
+  }, [run, now]);
   const patchSettings = (patch: Partial<Settings>) => setData(d => ({ ...d, settings: normalizeSettings({ ...d.settings, ...patch }) }));
   const start = () => {
-    if (settings.sound) void unlockAudio().then(ok => { if (!ok) setToast('Audio could not start. Try the sound test in the menu.'); });
+    tap(settings);
     const at = Date.now(); warned.current = null; endSignalled.current = null; setResult(null); setUndo(null); setNow(at); setRun(startRun(settings, at));
   };
   const remove = (id: string) => {
@@ -276,18 +289,20 @@ export default function App() {
   };
   const time = run ? elapsed(run, now) : 0;
   const limit = run ? phaseLimit(run) : null;
-  const hidden = run?.phase === 'cold' && run.coldTarget !== null;
+  // A cold surprise counts up but hides its target and progress until the three beeps.
+  const surprise = run?.phase === 'cold' && run.coldTarget !== null;
+  const surpriseDone = surprise && limit !== null && time >= limit;
   const ready = run?.phase === 'coldReady';
   const rinseOvertime = run?.phase === 'rinse' && limit !== null && time >= limit;
   const phaseInfo = run ? phaseText[run.phase] : null;
-  const progress = run && limit && !hidden ? Math.min(1, time / limit) : 0;
+  const progress = surpriseDone ? 1 : run && limit && !surprise ? Math.min(1, time / limit) : 0;
   const wakeProblem = wake.status !== 'On' && wake.status !== 'Off';
   const coldSummary = !settings.coldEnabled ? 'A little extra reset. Entirely optional.' : settings.mode === 'measure' ? 'Count or surprise · pick when cold' : settings.coldMode === 'random' ? `Surprise · ${formatTime(settings.coldMin)}–${formatTime(settings.coldMax)}` : 'Measure your moment of cold';
   const latest = data.sessions.find(s => s.complete);
   const notification = toast && <div className="toast" role="status"><span>{toast}</span>{deleted && <button onClick={() => { setData(d => ({ ...d, sessions: [...d.sessions, deleted].sort((a, b) => b.startedAt - a.startedAt) })); setDeleted(null); setToast('Restored.'); }}>Undo</button>}<button className="icon-button" aria-label="Dismiss notification" onClick={() => setToast('')}><X size={16} /></button></div>;
 
   return <div className={'app-shell' + (!run && !result ? ' home-screen' : '') + (run ? ' shower-screen' : '')}>
-    <header className="app-header"><a className="brand" href={import.meta.env.BASE_URL} onClick={e => { e.preventDefault(); if (!run) { setResult(null); setPanel(null); } }}><span className="brand-mark"><Droplets size={22} /></span><span>shower<span className="brand-light">timer</span><span className="brand-dot">.</span></span></a><button className="icon-button" aria-label="Open menu" onClick={() => setPanel('menu')}><Menu size={23} /></button></header>
+    <header className="app-header"><a className="brand" href={import.meta.env.BASE_URL} onClick={e => { e.preventDefault(); if (!run) { setResult(null); setPanel(null); } }}><span className="brand-mark"><Droplets size={22} /></span><span>shower<span className="brand-light">timer</span><span className="brand-dot">.</span></span></a><div className="header-actions"><button className={'icon-button sound-test' + (ringing ? ' ringing' : '')} aria-label={(run?.settings ?? settings).sound ? 'Test beep' : 'Test beep (shower beeps are off)'} onClick={() => void testBeep()}>{(run?.settings ?? settings).sound ? <Volume2 size={21} /> : <VolumeX size={21} />}</button><button className="icon-button" aria-label="Open menu" onClick={() => setPanel('menu')}><Menu size={23} /></button></div></header>
     <main>
       {!run && !result && <>
         <div className="home-intro">
@@ -308,16 +323,16 @@ export default function App() {
           return <span className={i === current ? 'current' : i < current ? 'done' : ''} aria-current={i === current ? 'step' : undefined} key={p}><span aria-hidden="true">{i < current ? '✓' : steps[p][0]}</span>{steps[p][1]}</span>;
         })}</div>
         <h1 className="active-title">{phaseInfo.title}</h1>
-        <div className="ring-zone"><Ambient phase={run.phase} /><div className={'timer-ring ' + (hidden || ready ? 'mystery' : '')}>
+        <div className="ring-zone"><Ambient phase={run.phase} /><div className={'timer-ring ' + (ready || (surprise && !surpriseDone) ? 'mystery' : '')}>
           <svg className="ring-svg" viewBox="0 0 300 300" aria-hidden="true"><circle className="ring-track" cx="150" cy="150" r="138" /><circle className="ring-progress" cx="150" cy="150" r="138" strokeDasharray="867.08" strokeDashoffset={867.08 * (1 - progress)} /></svg>
-          <div className="timer-content"><span className="phase-emoji">{phaseInfo.emoji}</span>{hidden || ready ? <><strong className="mystery-label">{ready ? 'Your moment.' : 'Stay present.'}</strong><small>{run.pausedAt !== null ? 'Paused' : ready ? 'Start when it’s cold' : run.settings.sound ? 'Wait for three beeps' : 'Sound is off'}</small></> : <><strong className="timer-number">{rinseOvertime ? `+${formatTime(time - limit!)}` : formatTime(limit !== null ? Math.ceil(Math.max(0, limit - time)) : time)}</strong><small>{run.pausedAt !== null ? 'Paused' : rinseOvertime ? 'past your target' : limit !== null ? 'remaining' : 'elapsed'}</small></>}</div>
+          <div className="timer-content"><span className="phase-emoji">{phaseInfo.emoji}</span>{ready ? <><strong className="mystery-label">Your moment.</strong><small>Start when it’s cold</small></> : <><strong className="timer-number">{rinseOvertime ? `+${formatTime(time - limit!)}` : formatTime(limit !== null && !surprise ? Math.ceil(Math.max(0, limit - time)) : time)}</strong><small>{run.pausedAt !== null ? 'Paused' : rinseOvertime ? 'past your target' : surpriseDone ? `Surprise ${formatTime(limit!)} ✓` : surprise ? (run.settings.sound ? 'Wait for three beeps' : 'Sound is off') : limit !== null ? 'remaining' : 'elapsed'}</small></>}</div>
         </div></div>
-        {run.phase === 'soap' && run.wetNeedsConfirmation && <div className="water-confirmation"><strong>When did you turn the water off?</strong><div><button className="secondary" onClick={() => setRun(confirmWaterStop(run, Date.now(), 'onTime'))}>Stopped on time</button><button className="secondary" onClick={() => { const at = Date.now(); setRun(confirmWaterStop(run, at, 'now')); setNow(at); setToast('Water time corrected. Soap timer starts now.'); }}>Water off just now</button></div></div>}
+        {run.phase === 'soap' && run.wetNeedsConfirmation && <div className="water-confirmation"><strong>When did you turn the water off?</strong><div><button className="secondary" onClick={() => { tap(run.settings); setRun(confirmWaterStop(run, Date.now(), 'onTime')); }}>Stopped on time</button><button className="secondary" onClick={() => { tap(run.settings); const at = Date.now(); setRun(confirmWaterStop(run, at, 'now')); setNow(at); setToast('Water time corrected. Soap timer starts now.'); }}>Water off just now</button></div></div>}
         {ready && run.settings.mode === 'measure' && run.coldSurprise !== null && <div className="segmented cold-choice" role="group" aria-label="Cold finish"><button aria-pressed={run.coldTarget === null} className={run.coldTarget === null ? 'selected' : ''} onClick={() => setRun(chooseCold(run, 'measure'))}><Clock3 size={18} />Just count</button><button aria-pressed={run.coldTarget !== null} className={run.coldTarget !== null ? 'selected' : ''} onClick={() => setRun(chooseCold(run, 'random'))}><Shuffle size={18} />Surprise me</button></div>}
-        <PhaseLane phase={run.phase} progress={limit !== null && !hidden ? progress : null} overtime={rinseOvertime} />
+        <PhaseLane phase={run.phase} progress={limit !== null && !surprise ? progress : null} overtime={rinseOvertime || surpriseDone} />
         {rinseOvertime ? <div className="stop-choice"><button className="primary secondary-tone" onClick={() => goNext('onTime')}>Stopped on time</button><button className="primary" onClick={() => goNext('now')}><Check size={19} />Stopped just now</button></div>
-          : <button className="primary" onClick={() => goNext()}>{ready ? <><Snowflake size={19} />Start cold water</> : run.phase === 'wet' ? <>Time to soap up<ArrowRight size={19} /></> : run.phase === 'soap' ? <>Start rinsing<ArrowRight size={19} /></> : run.phase === 'rinse' && run.settings.coldEnabled ? <>Ready for cold<ArrowRight size={19} /></> : <><Check size={19} />{run.phase === 'cold' ? 'Finish now' : 'Finish shower'}</>}</button>}
-        <div className="active-actions">{undoButton('Undo')}{!ready && <button className="secondary" onClick={() => { setRun(togglePause(run, Date.now())); setNow(Date.now()); }}>{run.pausedAt !== null ? <Play size={16} /> : <Pause size={16} />}{run.pausedAt !== null ? 'Resume' : 'Pause'}</button>}{ready && <button className="secondary" onClick={() => saveResult(finish(run, Date.now(), true))}>Skip cold</button>}<button className="text-button muted" onClick={() => setConfirmStop(true)}>End shower</button></div>
+          : <button className="primary" onClick={() => goNext()}>{ready ? <><Snowflake size={19} />Start cold water</> : run.phase === 'wet' ? <>Time to soap up<ArrowRight size={19} /></> : run.phase === 'soap' ? <>Start rinsing<ArrowRight size={19} /></> : run.phase === 'rinse' && run.settings.coldEnabled ? <>Ready for cold<ArrowRight size={19} /></> : <><Check size={19} />{run.phase !== 'cold' ? 'Finish shower' : surpriseDone ? 'I’m done' : 'Finish now'}</>}</button>}
+        <div className="active-actions">{undoButton('Undo')}{!ready && <button className="secondary" onClick={() => { tap(run.settings); setRun(togglePause(run, Date.now())); setNow(Date.now()); }}>{run.pausedAt !== null ? <Play size={16} /> : <Pause size={16} />}{run.pausedAt !== null ? 'Resume' : 'Pause'}</button>}{ready && <button className="secondary" onClick={() => { tap(run.settings); saveResult(finish(run, Date.now(), true)); }}>Skip cold</button>}<button className="text-button muted" onClick={() => setConfirmStop(true)}>End shower</button></div>
         {wakeProblem && <button className="wake-status text-button" onClick={wake.retry}><span className="status-dot warning" />Screen may sleep · retry</button>}
       </section></>}
       {result && !run && <section className="result-view"><div className="result-emoji">{result.complete ? '✨' : '🫧'}</div><div className="eyebrow">{result.complete ? 'FRESH CHAPTER. SAME YOU.' : 'STOPPED EARLY · SAVED'}</div><h1>{result.complete ? 'All refreshed.' : 'A moment, saved.'}</h1><div className="result-total"><strong>{formatTime(total(result))}</strong><span>your shower</span></div><div className="settings-card"><PhaseTimes session={result} /></div><button className="primary" onClick={() => { setResult(null); setUndo(null); }}>Lovely. All done.<Check size={19} /></button><div className="result-actions">{undoButton('Not done yet')}<button className="text-button" onClick={() => setPanel('history')}><History size={17} />View history</button></div></section>}

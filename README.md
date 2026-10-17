@@ -33,14 +33,17 @@ The development server intentionally does not register one.
   or “Stopped on time” (ignore the forgotten final tap).
 - **Just measure:** tap to move through each phase, without targets.
 - **Cold finish:** optional stopwatch or hidden random duration within your range. Start when
-  the water is cold. A surprise has no countdown, progress indicator or warning beep.
+  the water is cold. A surprise shows a stopwatch counting up, but no countdown, target, progress
+  or warning beep. Three beeps mark the hidden target; the stopwatch keeps going until you tap
+  “I’m done”, and history saves your actual cold time with the surprise target beside it.
   In Just measure the cold step asks again: **Just count** or **Surprise me** (your saved choice
   is preselected). The surprise duration is still drawn before the shower starts.
-- **Phase scenes:** each phase fills the screen with its own colour — blue wet, pink soap,
-  green rinse, bright frost for cold — plus a large phase badge when it begins. A lane below
+- **Phase scenes:** each phase fills the screen with its own colour — warm golden wet, pink soap,
+  orange-red rinse, then dark icy blue with frosted edges for cold — plus a large phase badge when
+  it begins. The dark theme stays dark throughout; light theme uses pale versions. A lane below
   the timer fills like a progress bar in timed phases; elsewhere emojis drift across it
   (bubbles, drops, polar bears and ice cubes). Cold surprise lanes loop at irregular speeds and
-  never reflect elapsed time. Animations pause with the shower and respect reduced motion.
+  never reveal progress; after the three beeps the ring fills and the lane pulses. Animations pause with the shower and respect reduced motion.
 - **Undo:** for 8 seconds after tapping to the next phase or finishing, Undo returns you to the
   previous phase. Time since the tap counts towards it, pauses stay excluded, and an undone
   finish is removed from history again.
@@ -48,6 +51,9 @@ The development server intentionally does not register one.
   Safari viewport without scrolling; the timer ring shrinks to the remaining height.
 - **Sound:** one warning beep, three at the end. Louder, longer tones by default, with a gentle
   option and a preview in Settings. The phone's media volume still determines actual loudness.
+  The speaker in the header plays a test beep on every screen, even when shower beeps are off.
+  With beeps on, Start and every shower button give a short confirmation beep, so a muted phone
+  or a connected Bluetooth headset is noticed straight away (beeps follow the phone's audio route).
 - **Vibration:** optional warning/end patterns and a hardware test. Supported Android browsers
   can vibrate; iPhone/Safari does not support timed PWA vibration. An accepted request alone
   does not prove the device has a vibration motor or that its settings allow it.

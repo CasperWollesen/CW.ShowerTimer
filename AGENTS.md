@@ -14,8 +14,9 @@ analytics, remote fonts or runtime network dependencies.
   Moving on without correcting assumes the water stopped on time. Rinse measures overtime and
   waits for an explicit now/on-time choice. Keep correction and pause calculations in domain.ts.
 - Share only the public Pages URL; generate QR locally. Never imply iPhone supports timer vibration.
-- Choose the cold surprise before the shower. Never reveal countdown, progress, target or elapsed
-  time while the surprise is active. No warning beep during a surprise.
+- Choose the cold surprise before the shower. While it is active, show only elapsed time counting up:
+  never the countdown, progress or target. Three beeps mark the target; the count keeps going until
+  Finish and saves the actual time. No warning beep during a surprise.
 - Cold always needs its own Start tap after the water is cold.
 - Support reduced motion, keyboard navigation, accessible labels and safe areas.
 - Updates must not interrupt a shower. Never promise alarms while locked/backgrounded.
